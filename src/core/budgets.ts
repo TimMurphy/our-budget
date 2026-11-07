@@ -1,0 +1,171 @@
+/** Budget groups, budget accounts, monthly amounts, and assigning transactions to them. */
+import type { EventStore } from "./event-store.ts";
+import type { Mediator, Request } from "./mediator.ts";
+import { type BudgetKind, type Cadence, type Model } from "./model.ts";
+
+const cadences: Cadence[] = ["yearly", "quarterly", "monthly", "fortnightly", "weekly"];
+const isMonth = (m: string) => /^\d{4}-(0[1-9]|1[0-2])$/.test(m);
+
+export interface CreateBudgetGroup extends Request<{ id: string }> { type: "CreateBudgetGroup"; name: string }
+
+export interface CreateBudgetAccount extends Request<{ id: string }> {
+  type: "CreateBudgetAccount";
+  groupId: string;
+  name: string;
+  kind?: BudgetKind;
+  /** Optional auto monthly: an amount that recurs on a cadence. */
+  auto?: { cadence: Cadence; amountCents: number };
+}
+
+export interface MoveBudgetAccount extends Request<{ ok: true }> {
+  type: "MoveBudgetAccount";
+  budgetAccountId: string;
+  groupId: string;
+}
+
+export interface SetBudgetAmount extends Request<{ ok: true }> {
+  type: "SetBudgetAmount";
+  budgetAccountId: string;
+  month: string; // YYYY-MM
+  amountCents: number;
+}
+
+export interface AssignTransaction extends Request<{ ok: true }> {
+  type: "AssignTransaction";
+  transactionId: string;
+  /** Must add up to the transaction's amount. Empty clears the assignment. */
+  allocations: { budgetAccountId: string; amountCents: number }[];
+}
+
+export interface BudgetAccountView {
+  id: string;
+  name: string;
+  kind: BudgetKind;
+  auto: { cadence: Cadence; amountCents: number } | null;
+  budgetedCents: number;
+  activityCents: number;
+}
+export interface BudgetGroupView { id: string; name: string; accounts: BudgetAccountView[] }
+export interface BudgetView {
+  month: string;
+  /** Income assigned to income accounts in the previous month: what this month's budget is funded from. */
+  incomeLastMonthCents: number;
+  budgetedCents: number;
+  toBudgetCents: number;
+  groups: BudgetGroupView[];
+}
+export interface GetBudget extends Request<BudgetView> { type: "GetBudget"; month: string }
+
+const previousMonth = (month: string) => {
+  const [y, m] = month.split("-").map(Number) as [number, number];
+  return m === 1 ? `${y - 1}-12` : `${y}-${String(m - 1).padStart(2, "0")}`;
+};
+
+export function registerBudgets(mediator: Mediator, store: EventStore, model: Model): void {
+  const needGroup = (id: string) => {
+    if (!model.groups.some((g) => g.id === id)) throw new Error("Unknown budget group");
+  };
+  const needBudgetAccount = (id: string) => {
+    const a = model.budgetAccounts.find((b) => b.id === id);
+    if (!a) throw new Error("Unknown budget account");
+    return a;
+  };
+
+  mediator.register<CreateBudgetGroup>("CreateBudgetGroup", (cmd) => {
+    const name = cmd.name?.trim();
+    if (!name) throw new Error("Group name is required");
+    if (model.groups.some((g) => g.name.toLowerCase() === name.toLowerCase())) {
+      throw new Error("Group name must be unique");
+    }
+    const id = crypto.randomUUID();
+    store.append("budget", "any", [{ type: "BudgetGroupCreated", data: { groupId: id, name } }]);
+    return { id };
+  });
+
+  mediator.register<CreateBudgetAccount>("CreateBudgetAccount", (cmd) => {
+    const name = cmd.name?.trim();
+    if (!name) throw new Error("Budget account name is required");
+    needGroup(cmd.groupId);
+    if (model.budgetAccounts.some((a) => a.name.toLowerCase() === name.toLowerCase())) {
+      throw new Error("Budget account name must be unique");
+    }
+    if (cmd.auto && (!cadences.includes(cmd.auto.cadence) || !Number.isInteger(cmd.auto.amountCents))) {
+      throw new Error("Auto monthly needs a cadence and an amount");
+    }
+    const id = crypto.randomUUID();
+    store.append("budget", "any", [
+      {
+        type: "BudgetAccountCreated",
+        data: { budgetAccountId: id, groupId: cmd.groupId, name, kind: cmd.kind ?? "expense", auto: cmd.auto ?? null },
+      },
+    ]);
+    return { id };
+  });
+
+  mediator.register<MoveBudgetAccount>("MoveBudgetAccount", (cmd) => {
+    needBudgetAccount(cmd.budgetAccountId);
+    needGroup(cmd.groupId);
+    store.append("budget", "any", [
+      { type: "BudgetAccountMoved", data: { budgetAccountId: cmd.budgetAccountId, groupId: cmd.groupId } },
+    ]);
+    return { ok: true };
+  });
+
+  mediator.register<SetBudgetAmount>("SetBudgetAmount", (cmd) => {
+    needBudgetAccount(cmd.budgetAccountId);
+    if (!isMonth(cmd.month)) throw new Error("Month must be YYYY-MM");
+    if (!Number.isInteger(cmd.amountCents) || cmd.amountCents < 0) throw new Error("Amount must be zero or more");
+    store.append("budget", "any", [
+      { type: "BudgetAmountSet", data: { budgetAccountId: cmd.budgetAccountId, month: cmd.month, amountCents: cmd.amountCents } },
+    ]);
+    return { ok: true };
+  });
+
+  mediator.register<AssignTransaction>("AssignTransaction", (cmd) => {
+    const tx = model.transactions.get(cmd.transactionId);
+    if (!tx) throw new Error("Unknown transaction");
+    const allocations = cmd.allocations ?? [];
+    for (const a of allocations) {
+      needBudgetAccount(a.budgetAccountId);
+      if (!Number.isInteger(a.amountCents) || a.amountCents === 0) throw new Error("Each amount must be non-zero");
+    }
+    if (new Set(allocations.map((a) => a.budgetAccountId)).size !== allocations.length) {
+      throw new Error("Each budget account can appear once");
+    }
+    const total = allocations.reduce((s, a) => s + a.amountCents, 0);
+    if (allocations.length && total !== tx.amountCents) {
+      throw new Error(`Amounts must add up to the transaction amount (${tx.amountCents / 100}), got ${total / 100}`);
+    }
+    store.append(`transactions-${tx.accountId}`, "any", [
+      { type: "TransactionAssigned", data: { transactionId: tx.id, allocations } },
+    ]);
+    return { ok: true };
+  });
+
+  mediator.register<GetBudget>("GetBudget", (q) => {
+    if (!isMonth(q.month)) throw new Error("Month must be YYYY-MM");
+    const activity = new Map<string, number>();
+    const incomeIds = new Set(model.budgetAccounts.filter((a) => a.kind === "income").map((a) => a.id));
+    let incomeLastMonthCents = 0;
+    const last = previousMonth(q.month);
+    for (const t of model.transactions.values()) {
+      for (const al of t.allocations) {
+        if (t.date.startsWith(q.month)) activity.set(al.budgetAccountId, (activity.get(al.budgetAccountId) ?? 0) + al.amountCents);
+        if (t.date.startsWith(last) && incomeIds.has(al.budgetAccountId)) incomeLastMonthCents += al.amountCents;
+      }
+    }
+    let budgetedCents = 0;
+    const groups = model.groups.map((g): BudgetGroupView => ({
+      id: g.id,
+      name: g.name,
+      accounts: model.budgetAccounts
+        .filter((a) => a.groupId === g.id)
+        .map((a): BudgetAccountView => {
+          const budgeted = a.kind === "income" ? 0 : model.budgetedCents(a, q.month);
+          budgetedCents += budgeted;
+          return { id: a.id, name: a.name, kind: a.kind, auto: a.auto, budgetedCents: budgeted, activityCents: activity.get(a.id) ?? 0 };
+        }),
+    }));
+    return { month: q.month, incomeLastMonthCents, budgetedCents, toBudgetCents: incomeLastMonthCents - budgetedCents, groups };
+  });
+}

@@ -1,2 +1,5 @@
 # local data: sqlite database and downloaded bank statements
 data/
+node_modules/
+dist/
+specs/secrets.md
