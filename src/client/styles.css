@@ -1,0 +1,117 @@
+:root {
+  --color-bg: #191919;
+  --color-surface: #303030;
+  --color-text: #bae2ef;
+  --color-muted: #8fb3c0;
+  --color-accent: #6ec6e6;
+  --color-border: #444444;
+  --header-height: 3.5rem;
+  --radius: 0.75rem;
+  --shadow: 0 1px 2px rgb(0 0 0 / 40%);
+  color-scheme: dark;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  line-height: 1.5;
+  color: var(--color-text);
+  background: var(--color-bg);
+}
+
+a { color: var(--color-accent); text-decoration: none; }
+h2, h3 { margin: 0 0 0.5rem; }
+.muted { color: var(--color-muted); }
+.amount { font-variant-numeric: tabular-nums; }
+.amount.big { font-size: 1.5rem; font-weight: 600; margin: 0.25rem 0; }
+.num { text-align: right; }
+.spacer { flex: 1; }
+ul.plain { margin: 0; padding: 0; list-style: none; }
+[role="alert"] { color: #ff9a9a; }
+
+.top-bar {
+  position: fixed;
+  inset: 0 0 auto 0;
+  height: var(--header-height);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 1.5rem;
+  background: var(--color-surface);
+  border-bottom: 1px solid var(--color-border);
+  box-shadow: var(--shadow);
+  z-index: 10;
+}
+.brand { font-size: 1.25rem; font-weight: 700; color: var(--color-text); }
+.navbar { display: flex; gap: 1.25rem; }
+.navbar a { color: var(--color-muted); font-weight: 500; }
+.navbar a:hover, .navbar a[aria-current] { color: var(--color-accent); }
+
+main {
+  max-width: 64rem;
+  margin: 0 auto;
+  padding: calc(var(--header-height) + 1.5rem) 1.5rem 1.5rem;
+}
+
+.page-head { display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }
+
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(16rem, 1fr)); gap: 1rem; }
+.card {
+  padding: 1.25rem;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+.card p { margin: 0.25rem 0; }
+.card li { display: flex; justify-content: space-between; gap: 1rem; padding: 0.15rem 0; }
+
+.tabs { display: flex; gap: 1rem; margin: 1rem 0; border-bottom: 1px solid var(--color-border); }
+.tabs a { padding: 0.4rem 0; color: var(--color-muted); border-bottom: 2px solid transparent; }
+.tabs a[aria-current] { color: var(--color-accent); border-color: var(--color-accent); }
+
+table { width: 100%; border-collapse: collapse; }
+th, td { padding: 0.5rem 0.75rem; text-align: left; border-bottom: 1px solid var(--color-border); vertical-align: top; }
+th.num, td.num { text-align: right; }
+.assign-row td { background: var(--color-surface); }
+
+label { display: grid; gap: 0.25rem; font-weight: 500; }
+input, select {
+  padding: 0.5rem 0.65rem;
+  font: inherit;
+  color: inherit;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: 0.5rem;
+}
+button {
+  padding: 0.5rem 1rem;
+  font: inherit;
+  font-weight: 600;
+  color: var(--color-bg);
+  background: var(--color-accent);
+  border: 0;
+  border-radius: 0.5rem;
+  cursor: pointer;
+}
+button.secondary { color: var(--color-text); background: transparent; border: 1px solid var(--color-border); }
+
+.split { display: flex; gap: 0.5rem; margin-bottom: 0.5rem; }
+.split select { flex: 1; }
+.split input { width: 8rem; text-align: right; }
+
+.summary { display: flex; gap: 2rem; margin: 1rem 0; flex-wrap: wrap; }
+.summary div { display: grid; }
+.summary strong { font-size: 1.4rem; }
+
+.groups { display: grid; grid-template-columns: repeat(auto-fill, minmax(22rem, 1fr)); gap: 1rem; margin-bottom: 2rem; }
+.group.drop-target { border-color: var(--color-accent); }
+.budget-accounts li { align-items: center; padding: 0.4rem 0; cursor: grab; border-bottom: 1px solid var(--color-border); }
+.budget-accounts input.budgeted { width: 7rem; text-align: right; }
+.budget-accounts .activity { min-width: 6rem; text-align: right; }
+.drop-hint { padding: 1rem 0; }
+
+.forms { display: grid; grid-template-columns: repeat(auto-fit, minmax(18rem, 1fr)); gap: 1.5rem; }
+form.inline { display: grid; gap: 0.75rem; align-content: start; }
