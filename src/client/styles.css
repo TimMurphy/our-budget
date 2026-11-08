@@ -119,3 +119,5 @@ form.inline { display: grid; gap: 0.75rem; align-content: start; }
 .new-account[hidden], .new-group-name[hidden] { display: none; }
 td.actions { white-space: nowrap; }
 td.actions button { margin-right: 0.25rem; }
+th.date, td.date { white-space: nowrap; }
+.table-scroll { overflow-x: auto; }

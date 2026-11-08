@@ -2,7 +2,7 @@ import type { GetTransactions, TransactionFilter, TransactionRow } from "../../c
 import type { BudgetView, TransferCandidate } from "../../core/budgets.ts";
 import { toCents } from "../../core/money.ts";
 import { send } from "../api.ts";
-import { currentMonth, esc, formatCents } from "../dom.ts";
+import { currentMonth, esc, formatCents, formatDate } from "../dom.ts";
 
 const NEW = "__new__";
 
@@ -30,10 +30,10 @@ export async function renderBankAccount(root: HTMLElement, url: URL, params: str
         .map((f) => `<a href="/bank-accounts/${slug}${f.key === "all" ? "" : `?filter=${f.key}`}"${f.key === filter ? ' aria-current="page"' : ""}>${f.label}</a>`)
         .join("")}
     </nav>
-    <table class="transactions">
-      <thead><tr><th>Date</th><th>Description</th><th class="num">Amount</th><th>Assigned to</th><th></th></tr></thead>
+    <div class="table-scroll"><table class="transactions">
+      <thead><tr><th class="date">Date</th><th>Description</th><th class="num">Amount</th><th>Assigned to</th><th></th></tr></thead>
       <tbody>${transactions.map((t) => row(t)).join("")}</tbody>
-    </table>
+    </table></div>
     ${transactions.length === 0 ? `<p class="muted">No transactions.</p>` : ""}`;
 
   for (const tr of root.querySelectorAll<HTMLTableRowElement>("tr[data-id]")) {
@@ -53,7 +53,7 @@ function row(t: TransactionRow): string {
     const direction = t.amountCents < 0 ? "to" : "from";
     return `
     <tr data-id="${t.id}">
-      <td>${t.date}</td>
+      <td class="date">${formatDate(t.date)}</td>
       <td>${esc(t.description)}</td>
       <td class="num amount">${formatCents(t.amountCents)}</td>
       <td class="assigned">Transfer ${direction} <a href="/bank-accounts/${t.transfer.accountSlug}">${esc(t.transfer.accountName)}</a></td>
@@ -67,7 +67,7 @@ function row(t: TransactionRow): string {
     : `<span class="muted">Unassigned</span>`;
   return `
     <tr data-id="${t.id}">
-      <td>${t.date}</td>
+      <td class="date">${formatDate(t.date)}</td>
       <td>${esc(t.description)}</td>
       <td class="num amount">${formatCents(t.amountCents)}</td>
       <td class="assigned">${assigned}</td>
@@ -207,7 +207,7 @@ async function openTransfer(tr: HTMLTableRowElement, t: TransactionRow, done: ()
             ? `<label>This ${direction} another bank account. Matching transaction
                 <select aria-label="Matching transaction">
                   ${candidates
-                    .map((c) => `<option value="${c.transactionId}">${esc(c.accountName)}: ${c.date} ${esc(c.description)} ${formatCents(c.amountCents)}</option>`)
+                    .map((c) => `<option value="${c.transactionId}">${esc(c.accountName)}: ${formatDate(c.date)} ${esc(c.description)} ${formatCents(c.amountCents)}</option>`)
                     .join("")}
                 </select></label>
                <p><button type="submit">Link transfer</button>

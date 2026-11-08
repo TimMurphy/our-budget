@@ -4,7 +4,8 @@ Feature: Transfers between bank accounts
   So that moving money around isn't counted as income or spending
 
 Background:
-  Given a NAB account "Everyday" with opening balance 1000.00 at close of business "30 Oct 2026"
+  Given the browser language is "en-AU"
+  And a NAB account "Everyday" with opening balance 1000.00 at close of business "30 Oct 2026"
   And a Westpac account "Savings" with opening balance 200.00 at close of business "30 Oct 2026"
   And the downloaded statement for "Everyday" contains:
     | Date      | Amount  | Transaction Details  | Balance | Category  |
@@ -26,7 +27,7 @@ Scenario: Link the two sides of a transfer
 Scenario: Only close matching transactions in other accounts are offered
   When I goto /bank-accounts/everyday
   Then the transfer candidates for "TRANSFER TO SAVINGS" are:
-    | Savings: 2026-11-06 TRANSFER FROM EVERYDAY $500.00 |
+    | Savings: 06/11/2026 TRANSFER FROM EVERYDAY $500.00 |
 
 Scenario: A linked transfer counts as assigned
   Given the transfer "TRANSFER TO SAVINGS" is linked with "TRANSFER FROM EVERYDAY"
