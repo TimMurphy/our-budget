@@ -29,7 +29,19 @@ export interface Transaction {
   allocations: Allocation[];
   /** Id of the matching transaction in another bank account, when this is a transfer between them. */
   transferWith: string | null;
+  /** Assigned by an auto assign rule and not yet approved. Pending allocations don't count in budgets. */
+  pendingApproval: boolean;
+  autoRuleId: string | null;
 }
+
+export interface AutoAssignRule {
+  id: string;
+  /** Matches transactions whose description contains this text (ignoring case and extra spaces). */
+  pattern: string;
+  budgetAccountId: string;
+}
+
+export const normalizeText = (s: string): string => s.toLowerCase().replace(/\s+/g, " ").trim();
 
 export interface BudgetGroup { id: string; name: string }
 
@@ -59,6 +71,7 @@ export class Model {
   readonly transactions = new Map<string, Transaction>();
   readonly groups: BudgetGroup[] = [];
   readonly budgetAccounts: BudgetAccount[] = [];
+  readonly rules: AutoAssignRule[] = [];
 
   apply(e: StoredEvent): void {
     const d = e.data as any;
@@ -73,7 +86,7 @@ export class Model {
         this.transactions.set(d.transactionId, {
           id: d.transactionId, accountId: d.accountId, date: d.date, position: e.position,
           description: d.description, amountCents: d.amountCents, balanceCents: d.balanceCents,
-          bankCategory: d.bankCategory, allocations: [], transferWith: null,
+          bankCategory: d.bankCategory, allocations: [], transferWith: null, pendingApproval: false, autoRuleId: null,
         });
         break;
       case "BudgetGroupCreated":
@@ -108,9 +121,27 @@ export class Model {
         if (b) b.transferWith = null;
         break;
       }
+      case "AutoAssignRuleCreated":
+        this.rules.push({ id: d.ruleId, pattern: d.pattern, budgetAccountId: d.budgetAccountId });
+        break;
+      case "AutoAssignRuleDeleted": {
+        const i = this.rules.findIndex((r) => r.id === d.ruleId);
+        if (i >= 0) this.rules.splice(i, 1);
+        break;
+      }
+      case "TransactionAutoAssigned": {
+        const t = this.transactions.get(d.transactionId);
+        if (t) { t.allocations = d.allocations; t.pendingApproval = true; t.autoRuleId = d.ruleId; }
+        break;
+      }
+      case "TransactionApproved": {
+        const t = this.transactions.get(d.transactionId);
+        if (t) t.pendingApproval = false;
+        break;
+      }
       case "TransactionAssigned": {
         const t = this.transactions.get(d.transactionId);
-        if (t) t.allocations = d.allocations;
+        if (t) { t.allocations = d.allocations; t.pendingApproval = false; t.autoRuleId = null; }
         break;
       }
     }
@@ -119,6 +150,17 @@ export class Model {
   /** A transaction is "assigned" once it has budget allocations or is linked as a transfer. */
   isAssigned(t: Transaction): boolean {
     return t.allocations.length > 0 || t.transferWith !== null;
+  }
+
+  /** The rule that applies to a description: the longest matching pattern, then the oldest rule. */
+  ruleFor(description: string): AutoAssignRule | undefined {
+    const text = normalizeText(description);
+    let best: AutoAssignRule | undefined;
+    for (const r of this.rules) {
+      if (!text.includes(normalizeText(r.pattern))) continue;
+      if (!best || normalizeText(r.pattern).length > normalizeText(best.pattern).length) best = r;
+    }
+    return best;
   }
 
   accountBySlug(slug: string): BankAccount | undefined {

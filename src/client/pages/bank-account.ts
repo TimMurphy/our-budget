@@ -10,6 +10,7 @@ const filters: { key: TransactionFilter; label: string }[] = [
   { key: "all", label: "All transactions" },
   { key: "unassigned", label: "Unassigned" },
   { key: "assigned", label: "Assigned" },
+  { key: "pending", label: "Pending approval" },
 ];
 
 export async function renderBankAccount(root: HTMLElement, url: URL, params: string[]): Promise<void> {
@@ -30,6 +31,11 @@ export async function renderBankAccount(root: HTMLElement, url: URL, params: str
         .map((f) => `<a href="/bank-accounts/${slug}${f.key === "all" ? "" : `?filter=${f.key}`}"${f.key === filter ? ' aria-current="page"' : ""}>${f.label}</a>`)
         .join("")}
     </nav>
+    ${
+      filter === "pending" && transactions.length
+        ? `<p><button type="button" id="approve-all">Approve all</button> <span role="status"></span></p>`
+        : ""
+    }
     <div class="table-scroll"><table class="transactions">
       <thead><tr><th class="date">Date</th><th>Description</th><th class="num">Amount</th><th>Assigned to</th><th></th></tr></thead>
       <tbody>${transactions.map((t) => row(t)).join("")}</tbody>
@@ -39,6 +45,10 @@ export async function renderBankAccount(root: HTMLElement, url: URL, params: str
   for (const tr of root.querySelectorAll<HTMLTableRowElement>("tr[data-id]")) {
     const t = transactions.find((x) => x.id === tr.dataset["id"])!;
     const again = () => renderBankAccount(root, url, [slug]);
+    tr.querySelector("button.approve")?.addEventListener("click", async () => {
+      await send("ApproveTransactions", { transactionIds: [t.id] });
+      await again();
+    });
     tr.querySelector("button.assign")?.addEventListener("click", () => openAssign(tr, t, budgetAccounts, groups, again));
     tr.querySelector("button.transfer")?.addEventListener("click", () => void openTransfer(tr, t, again));
     tr.querySelector("button.unlink")?.addEventListener("click", async () => {
@@ -46,6 +56,11 @@ export async function renderBankAccount(root: HTMLElement, url: URL, params: str
       await again();
     });
   }
+
+  root.querySelector("#approve-all")?.addEventListener("click", async () => {
+    await send("ApproveTransactions", { transactionIds: transactions.map((t) => t.id) });
+    await renderBankAccount(root, url, [slug]);
+  });
 }
 
 function row(t: TransactionRow): string {
@@ -65,15 +80,19 @@ function row(t: TransactionRow): string {
         .map((a) => `${esc(a.budgetAccountName)}${t.allocations.length > 1 ? ` ${formatCents(a.amountCents)}` : ""}`)
         .join(", ")
     : `<span class="muted">Unassigned</span>`;
+  const pending = t.pendingApproval
+    ? ` <span class="badge">Pending approval</span> <span class="muted">matched “${esc(t.rulePattern ?? "")}”</span>`
+    : "";
   return `
     <tr data-id="${t.id}">
       <td class="date">${formatDate(t.date)}</td>
       <td>${esc(t.description)}</td>
       <td class="num amount">${formatCents(t.amountCents)}</td>
-      <td class="assigned">${assigned}</td>
+      <td class="assigned">${assigned}${pending}</td>
       <td class="actions">
+        ${t.pendingApproval ? `<button type="button" class="approve">Approve</button>` : ""}
         <button type="button" class="assign secondary">${t.allocations.length ? "Change" : "Assign"}</button>
-        <button type="button" class="transfer secondary">Transfer</button>
+        ${t.pendingApproval ? "" : `<button type="button" class="transfer secondary">Transfer</button>`}
       </td>
     </tr>`;
 }
@@ -115,6 +134,12 @@ function openAssign(
     <td colspan="5">
       <form class="assign-form">
         <div class="splits">${lines}</div>
+        ${
+          t.allocations.length
+            ? ""
+            : `<p><label class="check"><input type="checkbox" name="makeRule"> Always assign similar transactions to this budget account</label></p>
+               <label class="rule-text" hidden>Text to match <input name="rulePattern" autocomplete="off" value="${esc(t.description)}"></label>`
+        }
         <p>
           <button type="button" class="add-split secondary">Add split</button>
           <button type="submit">Save</button>
@@ -142,11 +167,16 @@ function openAssign(
     }
   });
 
+  form.querySelector<HTMLInputElement>("input[name=makeRule]")?.addEventListener("change", (e) => {
+    form.querySelector<HTMLElement>(".rule-text")!.hidden = !(e.target as HTMLInputElement).checked;
+  });
+
   panel.querySelector(".add-split")!.addEventListener("click", () => splits.insertAdjacentHTML("beforeend", line()));
   panel.querySelector(".cancel")!.addEventListener("click", () => panel.remove());
-  const save = async (allocations: { budgetAccountId: string; amountCents: number }[]) => {
+  const save = async (allocations: { budgetAccountId: string; amountCents: number }[], afterAssign?: () => Promise<void>) => {
     try {
       await send("AssignTransaction", { transactionId: t.id, allocations });
+      await afterAssign?.();
       await done();
     } catch (err) {
       status.textContent = (err as Error).message;
@@ -184,6 +214,20 @@ function openAssign(
           }
           const { id } = await send<{ id: string }>("CreateBudgetAccount", { name: l.name, groupId });
           allocations.push({ budgetAccountId: id, amountCents: l.amountCents });
+        }
+        const makeRule = form.querySelector<HTMLInputElement>("input[name=makeRule]")?.checked;
+        if (makeRule) {
+          const pattern = form.querySelector<HTMLInputElement>("input[name=rulePattern]")!.value.trim();
+          if (!pattern) throw new Error("Enter the text to match");
+          if (allocations.length !== 1) throw new Error("Auto assign needs a single budget account");
+          await save(allocations, async () => {
+            try {
+              await send("CreateAutoAssignRule", { pattern, budgetAccountId: allocations[0]!.budgetAccountId });
+            } catch (err) {
+              throw new Error(`Assigned, but the rule was not created: ${(err as Error).message}`);
+            }
+          });
+          return;
         }
         await save(allocations);
       } catch (err) {

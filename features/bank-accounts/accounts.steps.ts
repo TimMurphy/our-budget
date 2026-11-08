@@ -14,7 +14,7 @@ function isoDate(text: string): string {
   return `${y}-${String(MONTHS.indexOf(m.toLowerCase()) + 1).padStart(2, "0")}-${d.padStart(2, "0")}`;
 }
 
-let lastImport = { imported: 0, skipped: 0 };
+export let lastImport: { imported: number; skipped: number; autoAssigned: number } = { imported: 0, skipped: 0, autoAssigned: 0 };
 
 Given(
   "a {word} account {string} with opening balance {float} at close of business {string}",
@@ -52,5 +52,5 @@ Then("{string} has a balance of {float}", async (name: string, balance: number) 
 });
 
 Then("{int} transaction(s) was/were imported and {int} skipped", (imported: number, skipped: number) => {
-  assert.deepEqual(lastImport, { imported, skipped });
+  assert.deepEqual({ imported: lastImport.imported, skipped: lastImport.skipped }, { imported, skipped });
 });

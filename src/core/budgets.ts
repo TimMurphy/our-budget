@@ -1,7 +1,8 @@
 /** Budget groups, budget accounts, monthly amounts, and assigning transactions to them. */
+import { autoAssign } from "./auto-assign.ts";
 import type { EventStore } from "./event-store.ts";
 import type { Mediator, Request } from "./mediator.ts";
-import { type BudgetKind, type Cadence, type Model } from "./model.ts";
+import { normalizeText, type BudgetKind, type Cadence, type Model } from "./model.ts";
 
 const cadences: Cadence[] = ["yearly", "quarterly", "monthly", "fortnightly", "weekly"];
 const isMonth = (m: string) => /^\d{4}-(0[1-9]|1[0-2])$/.test(m);
@@ -61,6 +62,32 @@ export interface GetTransferCandidates extends Request<TransferCandidate[]> {
   type: "GetTransferCandidates";
   transactionId: string;
 }
+
+export interface CreateAutoAssignRule extends Request<{ id: string; autoAssigned: number }> {
+  type: "CreateAutoAssignRule";
+  /** Text to look for in a transaction's description. */
+  pattern: string;
+  budgetAccountId: string;
+}
+
+export interface DeleteAutoAssignRule extends Request<{ ok: true }> {
+  type: "DeleteAutoAssignRule";
+  ruleId: string;
+}
+
+export interface ApproveTransactions extends Request<{ approved: number }> {
+  type: "ApproveTransactions";
+  transactionIds: string[];
+}
+
+export interface AutoAssignRuleView {
+  id: string;
+  pattern: string;
+  budgetAccountId: string;
+  budgetAccountName: string;
+  groupName: string;
+}
+export interface GetAutoAssignRules extends Request<AutoAssignRuleView[]> { type: "GetAutoAssignRules" }
 
 export interface BudgetAccountView {
   id: string;
@@ -210,6 +237,51 @@ export function registerBudgets(mediator: Mediator, store: EventStore, model: Mo
       }));
   });
 
+  mediator.register<CreateAutoAssignRule>("CreateAutoAssignRule", (cmd) => {
+    const pattern = cmd.pattern?.trim().replace(/\s+/g, " ");
+    if (!pattern) throw new Error("Text to match is required");
+    needBudgetAccount(cmd.budgetAccountId);
+    if (model.rules.some((r) => normalizeText(r.pattern) === normalizeText(pattern))) {
+      throw new Error("An auto assign rule for that text already exists");
+    }
+    const id = crypto.randomUUID();
+    store.append("budget", "any", [
+      { type: "AutoAssignRuleCreated", data: { ruleId: id, pattern, budgetAccountId: cmd.budgetAccountId } },
+    ]);
+    return { id, autoAssigned: autoAssign(store, model) };
+  });
+
+  mediator.register<DeleteAutoAssignRule>("DeleteAutoAssignRule", (cmd) => {
+    if (!model.rules.some((r) => r.id === cmd.ruleId)) throw new Error("Unknown auto assign rule");
+    store.append("budget", "any", [{ type: "AutoAssignRuleDeleted", data: { ruleId: cmd.ruleId } }]);
+    return { ok: true };
+  });
+
+  mediator.register<ApproveTransactions>("ApproveTransactions", (cmd) => {
+    let approved = 0;
+    for (const id of cmd.transactionIds ?? []) {
+      const t = model.transactions.get(id);
+      if (!t) throw new Error("Unknown transaction");
+      if (!t.pendingApproval) continue;
+      store.append(`transactions-${t.accountId}`, "any", [{ type: "TransactionApproved", data: { transactionId: id } }]);
+      approved++;
+    }
+    return { approved };
+  });
+
+  mediator.register<GetAutoAssignRules>("GetAutoAssignRules", () =>
+    model.rules.map((r) => {
+      const account = model.budgetAccounts.find((a) => a.id === r.budgetAccountId);
+      return {
+        id: r.id,
+        pattern: r.pattern,
+        budgetAccountId: r.budgetAccountId,
+        budgetAccountName: account?.name ?? "?",
+        groupName: model.groups.find((g) => g.id === account?.groupId)?.name ?? "?",
+      };
+    }),
+  );
+
   mediator.register<GetBudget>("GetBudget", (q) => {
     if (!isMonth(q.month)) throw new Error("Month must be YYYY-MM");
     const activity = new Map<string, number>();
@@ -217,6 +289,7 @@ export function registerBudgets(mediator: Mediator, store: EventStore, model: Mo
     let incomeLastMonthCents = 0;
     const last = previousMonth(q.month);
     for (const t of model.transactions.values()) {
+      if (t.pendingApproval) continue; // auto assigned but not approved yet: not in the budget
       for (const al of t.allocations) {
         if (t.date.startsWith(q.month)) activity.set(al.budgetAccountId, (activity.get(al.budgetAccountId) ?? 0) + al.amountCents);
         if (t.date.startsWith(last) && incomeIds.has(al.budgetAccountId)) incomeLastMonthCents += al.amountCents;

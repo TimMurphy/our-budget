@@ -1,4 +1,4 @@
-import type { BudgetAccountView, BudgetView } from "../../core/budgets.ts";
+import type { AutoAssignRuleView, BudgetAccountView, BudgetView } from "../../core/budgets.ts";
 import { toCents } from "../../core/money.ts";
 import { send } from "../api.ts";
 import { currentMonth, esc, formatCents } from "../dom.ts";
@@ -10,7 +10,10 @@ const cadenceLabel: Record<string, string> = {
 
 export async function renderBudgets(root: HTMLElement, url: URL): Promise<void> {
   const month = url.searchParams.get("month") || currentMonth();
-  const budget = await send<BudgetView>("GetBudget", { month });
+  const [budget, rules] = await Promise.all([
+    send<BudgetView>("GetBudget", { month }),
+    send<AutoAssignRuleView[]>("GetAutoAssignRules"),
+  ]);
   const refresh = () => renderBudgets(root, url);
 
   root.innerHTML = `
@@ -26,6 +29,29 @@ export async function renderBudgets(root: HTMLElement, url: URL): Promise<void> 
     <p role="status"></p>
     <div class="groups">${budget.groups.map((g) => groupHtml(g)).join("")}</div>
     ${budget.groups.length === 0 ? `<p class="muted">No budget groups yet.</p>` : ""}
+
+    <section class="rules" aria-labelledby="rules-heading">
+      <h3 id="rules-heading">Auto assign rules</h3>
+      <p class="muted">Unassigned transactions whose description contains the text are assigned to the budget account, then wait for your approval.</p>
+      <table class="rules-table">
+        <tbody>
+          ${rules
+            .map(
+              (r) => `<tr data-rule="${r.id}"><td class="pattern">${esc(r.pattern)}</td><td>${esc(r.groupName)}: ${esc(r.budgetAccountName)}</td>
+                <td><button type="button" class="delete-rule secondary" aria-label="Delete rule ${esc(r.pattern)}">Delete</button></td></tr>`,
+            )
+            .join("")}
+        </tbody>
+      </table>
+      ${rules.length === 0 ? `<p class="muted">No rules yet.</p>` : ""}
+      <form class="inline" id="add-rule">
+        <label>Text to match <input name="pattern" autocomplete="off" required></label>
+        <label>Rule budget account <select name="budgetAccountId" required>
+          ${budget.groups.flatMap((g) => g.accounts.map((a) => `<option value="${a.id}">${esc(g.name)}: ${esc(a.name)}</option>`)).join("")}
+        </select></label>
+        <button type="submit">Add Rule</button>
+      </form>
+    </section>
 
     <div class="forms">
       <form class="inline" id="add-group">
@@ -83,6 +109,27 @@ export async function renderBudgets(root: HTMLElement, url: URL): Promise<void> 
       }),
     );
   });
+
+  root.querySelector<HTMLFormElement>("#add-rule")!.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const data = new FormData(e.target as HTMLFormElement);
+    try {
+      const { autoAssigned } = await send<{ autoAssigned: number }>("CreateAutoAssignRule", {
+        pattern: data.get("pattern"),
+        budgetAccountId: data.get("budgetAccountId"),
+      });
+      await refresh();
+      root.querySelector<HTMLElement>("[role=status]")!.textContent =
+        `Rule added. ${autoAssigned} transactions assigned, waiting for approval.`;
+    } catch (err) {
+      status.textContent = (err as Error).message;
+    }
+  });
+  for (const button of root.querySelectorAll<HTMLButtonElement>("button.delete-rule")) {
+    button.addEventListener("click", () =>
+      void run(() => send("DeleteAutoAssignRule", { ruleId: button.closest<HTMLElement>("[data-rule]")!.dataset["rule"] })),
+    );
+  }
 
   // Edit this month's budgeted amount.
   for (const input of root.querySelectorAll<HTMLInputElement>("input.budgeted")) {

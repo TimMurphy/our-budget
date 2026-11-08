@@ -2,6 +2,7 @@
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { autoAssign } from "./auto-assign.ts";
 import { findBank, knownBanks, type Bank } from "./banks.ts";
 import type { EventStore } from "./event-store.ts";
 import type { Mediator, Request } from "./mediator.ts";
@@ -10,7 +11,7 @@ import { toCents } from "./money.ts";
 
 export interface SyncBankAccounts extends Request<{ registered: string[] }> { type: "SyncBankAccounts" }
 
-export interface ImportTransactions extends Request<{ imported: number; skipped: number }> {
+export interface ImportTransactions extends Request<{ imported: number; skipped: number; autoAssigned: number }> {
   type: "ImportTransactions";
   /** Import just this account; omit for all. */
   slug?: string;
@@ -28,6 +29,7 @@ export interface BankAccountSummary {
   balanceCents: number;
   transactionCount: number;
   unassignedCount: number;
+  pendingApprovalCount: number;
 }
 export interface GetBankAccounts extends Request<BankAccountSummary[]> { type: "GetBankAccounts" }
 
@@ -41,8 +43,12 @@ export interface TransactionRow {
   allocations: { budgetAccountId: string; budgetAccountName: string; amountCents: number }[];
   /** Set when this is one side of a transfer between two of our bank accounts. */
   transfer: { transactionId: string; accountName: string; accountSlug: string } | null;
+  pendingApproval: boolean;
+  /** Text of the auto assign rule that assigned it, while pending. */
+  rulePattern: string | null;
 }
-export type TransactionFilter = "all" | "unassigned" | "assigned";
+/** "assigned" means assigned and approved; "pending" are auto assigned and awaiting approval. */
+export type TransactionFilter = "all" | "unassigned" | "assigned" | "pending";
 export interface GetTransactions extends Request<{ account: BankAccountSummary; transactions: TransactionRow[] }> {
   type: "GetTransactions";
   slug: string;
@@ -68,6 +74,7 @@ export function registerBankAccounts(mediator: Mediator, store: EventStore, mode
       openingDate: a.openingDate, openingBalanceCents: a.openingBalanceCents,
       balanceCents: model.balanceCents(a), transactionCount: txs.length,
       unassignedCount: txs.filter((t) => !model.isAssigned(t)).length,
+      pendingApprovalCount: txs.filter((t) => t.pendingApproval).length,
     };
   };
 
@@ -125,7 +132,8 @@ export function registerBankAccounts(mediator: Mediator, store: EventStore, mode
       if (events.length) store.append(`transactions-${account.id}`, "any", events);
       imported += events.length;
     }
-    return { imported, skipped };
+    // New transactions that a rule matches are assigned now, pending approval.
+    return { imported, skipped, autoAssigned: autoAssign(store, model) };
   });
 
   mediator.register<GetKnownBanks>("GetKnownBanks", () => knownBanks.map(({ code, name }) => ({ code, name })));
@@ -137,6 +145,11 @@ export function registerBankAccounts(mediator: Mediator, store: EventStore, mode
     if (!account) throw new Error("Bank account not found");
     const filter = q.filter ?? "all";
     const names = new Map(model.budgetAccounts.map((b) => [b.id, b.name]));
+    const matchesFilter = (t: Transaction, f: TransactionFilter) =>
+      f === "all" ||
+      (f === "pending" && t.pendingApproval) ||
+      (f === "assigned" && model.isAssigned(t) && !t.pendingApproval) ||
+      (f === "unassigned" && !model.isAssigned(t));
     const transferOf = (t: Transaction): TransactionRow["transfer"] => {
       const other = t.transferWith ? model.transactions.get(t.transferWith) : undefined;
       const otherAccount = other && model.accounts.find((a) => a.id === other.accountId);
@@ -146,13 +159,15 @@ export function registerBankAccounts(mediator: Mediator, store: EventStore, mode
     };
     const rows = model
       .transactionsOf(account.id)
-      .filter((t) => filter === "all" || (filter === "assigned") === model.isAssigned(t))
+      .filter((t) => matchesFilter(t, filter))
       .sort((a: Transaction, b: Transaction) => b.date.localeCompare(a.date) || b.position - a.position)
       .map((t): TransactionRow => ({
         id: t.id, date: t.date, description: t.description, amountCents: t.amountCents,
         balanceCents: t.balanceCents, bankCategory: t.bankCategory,
         allocations: t.allocations.map((al) => ({ ...al, budgetAccountName: names.get(al.budgetAccountId) ?? "?" })),
         transfer: transferOf(t),
+        pendingApproval: t.pendingApproval,
+        rulePattern: model.rules.find((r) => r.id === t.autoRuleId)?.pattern ?? null,
       }));
     return { account: summary(account), transactions: rows };
   });

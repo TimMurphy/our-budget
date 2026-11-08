@@ -18,7 +18,7 @@ export async function renderBankAccounts(root: HTMLElement): Promise<void> {
           <h3><a href="/bank-accounts/${a.slug}">${esc(a.name)}</a></h3>
           <p class="muted">${esc(a.bankName)}</p>
           <p class="amount big">${formatCents(a.balanceCents)}</p>
-          <p class="muted">${a.transactionCount} transactions, ${a.unassignedCount} unassigned</p>
+          <p class="muted">${a.transactionCount} transactions, ${a.unassignedCount} unassigned${a.pendingApprovalCount ? `, <a href="/bank-accounts/${a.slug}?filter=pending">${a.pendingApprovalCount} pending approval</a>` : ""}</p>
         </section>`,
         )
         .join("")}

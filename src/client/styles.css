@@ -121,3 +121,8 @@ td.actions { white-space: nowrap; }
 td.actions button { margin-right: 0.25rem; }
 th.date, td.date { white-space: nowrap; }
 .table-scroll { overflow-x: auto; }
+.badge { display: inline-block; padding: 0 0.5rem; font-size: 0.8rem; font-weight: 600; color: var(--color-bg); background: var(--color-accent); border-radius: 999px; }
+label.check { display: flex; align-items: center; gap: 0.5rem; }
+label.check input { width: auto; }
+.rules { margin-bottom: 2rem; }
+.rules-table td { padding: 0.35rem 0.75rem; }
