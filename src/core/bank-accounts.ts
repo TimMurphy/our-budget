@@ -39,6 +39,8 @@ export interface TransactionRow {
   balanceCents: number | null;
   bankCategory: string | null;
   allocations: { budgetAccountId: string; budgetAccountName: string; amountCents: number }[];
+  /** Set when this is one side of a transfer between two of our bank accounts. */
+  transfer: { transactionId: string; accountName: string; accountSlug: string } | null;
 }
 export type TransactionFilter = "all" | "unassigned" | "assigned";
 export interface GetTransactions extends Request<{ account: BankAccountSummary; transactions: TransactionRow[] }> {
@@ -65,7 +67,7 @@ export function registerBankAccounts(mediator: Mediator, store: EventStore, mode
       id: a.id, slug: a.slug, name: a.name, bankName: findBank(a.bankCode)?.name ?? a.bankCode,
       openingDate: a.openingDate, openingBalanceCents: a.openingBalanceCents,
       balanceCents: model.balanceCents(a), transactionCount: txs.length,
-      unassignedCount: txs.filter((t) => t.allocations.length === 0).length,
+      unassignedCount: txs.filter((t) => !model.isAssigned(t)).length,
     };
   };
 
@@ -135,14 +137,22 @@ export function registerBankAccounts(mediator: Mediator, store: EventStore, mode
     if (!account) throw new Error("Bank account not found");
     const filter = q.filter ?? "all";
     const names = new Map(model.budgetAccounts.map((b) => [b.id, b.name]));
+    const transferOf = (t: Transaction): TransactionRow["transfer"] => {
+      const other = t.transferWith ? model.transactions.get(t.transferWith) : undefined;
+      const otherAccount = other && model.accounts.find((a) => a.id === other.accountId);
+      return other && otherAccount
+        ? { transactionId: other.id, accountName: otherAccount.name, accountSlug: otherAccount.slug }
+        : null;
+    };
     const rows = model
       .transactionsOf(account.id)
-      .filter((t) => filter === "all" || (filter === "assigned") === t.allocations.length > 0)
+      .filter((t) => filter === "all" || (filter === "assigned") === model.isAssigned(t))
       .sort((a: Transaction, b: Transaction) => b.date.localeCompare(a.date) || b.position - a.position)
       .map((t): TransactionRow => ({
         id: t.id, date: t.date, description: t.description, amountCents: t.amountCents,
         balanceCents: t.balanceCents, bankCategory: t.bankCategory,
         allocations: t.allocations.map((al) => ({ ...al, budgetAccountName: names.get(al.budgetAccountId) ?? "?" })),
+        transfer: transferOf(t),
       }));
     return { account: summary(account), transactions: rows };
   });

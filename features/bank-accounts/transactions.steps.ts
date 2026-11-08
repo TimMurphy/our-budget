@@ -1,7 +1,7 @@
 import { Given, Then, When } from "@cucumber/cucumber";
 import assert from "node:assert/strict";
 import type { GetBankAccounts, GetTransactions } from "../../src/core/bank-accounts.ts";
-import type { AssignTransaction } from "../../src/core/budgets.ts";
+import type { AssignTransaction, GetBudget, LinkTransfer } from "../../src/core/budgets.ts";
 import { env } from "../support/world.ts";
 import { budgetAccountIdByName } from "../budgets/budgets.steps.ts";
 
@@ -47,9 +47,32 @@ const openAssign = async (description: string) => {
 When("I assign {string} to {string}", async (description: string, budgetAccount: string) => {
   const form = await openAssign(description);
   const option = form.locator("option", { hasText: new RegExp(`: ${budgetAccount}$`) });
-  await form.getByLabel("Budget account").selectOption((await option.getAttribute("value"))!);
+  await form.getByLabel("Budget account", { exact: true }).selectOption((await option.getAttribute("value"))!);
   await form.getByRole("button", { name: "Save" }).click();
 });
+
+When(
+  "I assign {string} to a new budget account {string} in group {string}",
+  async (description: string, name: string, group: string) => {
+    const form = await openAssign(description);
+    await form.getByLabel("Budget account", { exact: true }).selectOption({ label: "New budget account…" });
+    await form.getByLabel("New account name").fill(name);
+    await form.getByLabel("New account group").selectOption({ label: group });
+    await form.getByRole("button", { name: "Save" }).click();
+  },
+);
+
+When(
+  "I assign {string} to a new budget account {string} in a new group {string}",
+  async (description: string, name: string, group: string) => {
+    const form = await openAssign(description);
+    await form.getByLabel("Budget account", { exact: true }).selectOption({ label: "New budget account…" });
+    await form.getByLabel("New account name").fill(name);
+    await form.getByLabel("New account group").selectOption({ label: "New group…" });
+    await form.getByLabel("New group name").fill(group);
+    await form.getByRole("button", { name: "Save" }).click();
+  },
+);
 
 When("I split {string} across:", async (description: string, table: { raw(): string[][] }) => {
   const form = await openAssign(description);
@@ -58,7 +81,7 @@ When("I split {string} across:", async (description: string, table: { raw(): str
   for (const [i, [name, amount]] of lines.entries()) {
     const split = form.locator(".split").nth(i);
     const option = split.locator("option", { hasText: new RegExp(`: ${name}$`) });
-    await split.getByLabel("Budget account").selectOption((await option.getAttribute("value"))!);
+    await split.getByLabel("Budget account", { exact: true }).selectOption((await option.getAttribute("value"))!);
     await split.getByLabel("Amount").fill(amount!);
   }
   await form.getByRole("button", { name: "Save" }).click();
@@ -78,4 +101,42 @@ Then("{string} is assigned to {string}", async (description: string, text: strin
 
 Then("{string} is not assigned", async (description: string) => {
   await row(description).locator(".assigned", { hasText: "Unassigned" }).waitFor();
+});
+
+Then("the budget account {string} is in group {string}", async (name: string, group: string) => {
+  const view = await env.send<GetBudget>({ type: "GetBudget", month: "2026-11" });
+  const g = view.groups.find((x) => x.accounts.some((a) => a.name === name));
+  assert.equal(g?.name, group);
+});
+
+Given("the transfer {string} is linked with {string}", async (description: string, other: string) => {
+  await env.send<LinkTransfer>({
+    type: "LinkTransfer",
+    transactionId: (await transactionId(description)).id,
+    counterpartTransactionId: (await transactionId(other)).id,
+  });
+});
+
+When("I link {string} as a transfer with {string}", async (description: string, other: string) => {
+  await row(description).getByRole("button", { name: "Transfer" }).click();
+  const form = env.page.locator(".transfer-form");
+  const option = form.locator("option", { hasText: other });
+  await form.getByLabel("Matching transaction").selectOption((await option.getAttribute("value"))!);
+  await form.getByRole("button", { name: "Link transfer" }).click();
+});
+
+Then("the transfer candidates for {string} are:", async (description: string, table: { raw(): string[][] }) => {
+  await row(description).getByRole("button", { name: "Transfer" }).click();
+  const options = await env.page.locator(".transfer-form option").allTextContents();
+  assert.deepEqual(options, table.raw().map((r) => r[0]));
+});
+
+Then("there is no transfer candidate for {string}", async (description: string) => {
+  await row(description).getByRole("button", { name: "Transfer" }).click();
+  await env.page.getByText("No matching transaction in another bank account").waitFor();
+  assert.equal(await env.page.locator(".transfer-form select").count(), 0);
+});
+
+When("I unlink the transfer {string}", async (description: string) => {
+  await row(description).getByRole("button", { name: "Unlink transfer" }).click();
 });

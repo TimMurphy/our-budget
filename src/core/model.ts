@@ -27,6 +27,8 @@ export interface Transaction {
   balanceCents: number | null;
   bankCategory: string | null;
   allocations: Allocation[];
+  /** Id of the matching transaction in another bank account, when this is a transfer between them. */
+  transferWith: string | null;
 }
 
 export interface BudgetGroup { id: string; name: string }
@@ -71,7 +73,7 @@ export class Model {
         this.transactions.set(d.transactionId, {
           id: d.transactionId, accountId: d.accountId, date: d.date, position: e.position,
           description: d.description, amountCents: d.amountCents, balanceCents: d.balanceCents,
-          bankCategory: d.bankCategory, allocations: [],
+          bankCategory: d.bankCategory, allocations: [], transferWith: null,
         });
         break;
       case "BudgetGroupCreated":
@@ -93,12 +95,30 @@ export class Model {
         if (a) a.budgets.set(d.month, d.amountCents);
         break;
       }
+      case "TransferLinked": {
+        const a = this.transactions.get(d.transactionId);
+        const b = this.transactions.get(d.counterpartTransactionId);
+        if (a && b) { a.transferWith = b.id; b.transferWith = a.id; }
+        break;
+      }
+      case "TransferUnlinked": {
+        const a = this.transactions.get(d.transactionId);
+        const b = this.transactions.get(d.counterpartTransactionId);
+        if (a) a.transferWith = null;
+        if (b) b.transferWith = null;
+        break;
+      }
       case "TransactionAssigned": {
         const t = this.transactions.get(d.transactionId);
         if (t) t.allocations = d.allocations;
         break;
       }
     }
+  }
+
+  /** A transaction is "assigned" once it has budget allocations or is linked as a transfer. */
+  isAssigned(t: Transaction): boolean {
+    return t.allocations.length > 0 || t.transferWith !== null;
   }
 
   accountBySlug(slug: string): BankAccount | undefined {
