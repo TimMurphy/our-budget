@@ -65,3 +65,21 @@ Scenario: An assignment can be removed
   When I goto /bank-accounts/everyday
   And I unassign "PHARMACY"
   Then "PHARMACY" is not assigned
+
+Scenario: Create a new budget account while assigning
+  When I goto /bank-accounts/everyday
+  And I assign "SUPERMARKET" to a new budget account "Pets" in group "Food"
+  Then "SUPERMARKET" is assigned to "Pets"
+  And the budget account "Pets" is in group "Food"
+
+Scenario: Create a new budget account in a new group while assigning
+  When I goto /bank-accounts/everyday
+  And I assign "SUPERMARKET" to a new budget account "Cleaning" in a new group "Household"
+  Then "SUPERMARKET" is assigned to "Cleaning"
+  And the budget account "Cleaning" is in group "Household"
+
+Scenario: A new budget account name must be unique
+  When I goto /bank-accounts/everyday
+  And I assign "SUPERMARKET" to a new budget account "groceries" in group "Food"
+  Then I should see the message "Budget account name must be unique"
+  And "SUPERMARKET" is not assigned

@@ -98,7 +98,7 @@ button {
 }
 button.secondary { color: var(--color-text); background: transparent; border: 1px solid var(--color-border); }
 
-.split { display: flex; gap: 0.5rem; margin-bottom: 0.5rem; }
+.split { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 0.5rem; }
 .split select { flex: 1; }
 .split input { width: 8rem; text-align: right; }
 
@@ -115,3 +115,7 @@ button.secondary { color: var(--color-text); background: transparent; border: 1p
 
 .forms { display: grid; grid-template-columns: repeat(auto-fit, minmax(18rem, 1fr)); gap: 1.5rem; }
 form.inline { display: grid; gap: 0.75rem; align-content: start; }
+.new-account { flex-basis: 100%; display: grid; grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr)); gap: 0.5rem; padding: 0.5rem 0 0.25rem; }
+.new-account[hidden], .new-group-name[hidden] { display: none; }
+td.actions { white-space: nowrap; }
+td.actions button { margin-right: 0.25rem; }

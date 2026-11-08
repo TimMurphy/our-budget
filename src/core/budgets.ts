@@ -37,6 +37,31 @@ export interface AssignTransaction extends Request<{ ok: true }> {
   allocations: { budgetAccountId: string; amountCents: number }[];
 }
 
+export interface LinkTransfer extends Request<{ ok: true }> {
+  type: "LinkTransfer";
+  transactionId: string;
+  /** The other side of the transfer, in a different bank account. */
+  counterpartTransactionId: string;
+}
+
+export interface UnlinkTransfer extends Request<{ ok: true }> {
+  type: "UnlinkTransfer";
+  transactionId: string;
+}
+
+export interface TransferCandidate {
+  transactionId: string;
+  accountName: string;
+  date: string;
+  description: string;
+  amountCents: number;
+}
+/** Unassigned transactions in other bank accounts that could be the other side of this transfer. */
+export interface GetTransferCandidates extends Request<TransferCandidate[]> {
+  type: "GetTransferCandidates";
+  transactionId: string;
+}
+
 export interface BudgetAccountView {
   id: string;
   name: string;
@@ -124,6 +149,7 @@ export function registerBudgets(mediator: Mediator, store: EventStore, model: Mo
   mediator.register<AssignTransaction>("AssignTransaction", (cmd) => {
     const tx = model.transactions.get(cmd.transactionId);
     if (!tx) throw new Error("Unknown transaction");
+    if (tx.transferWith) throw new Error("This transaction is a transfer; unlink the transfer first");
     const allocations = cmd.allocations ?? [];
     for (const a of allocations) {
       needBudgetAccount(a.budgetAccountId);
@@ -140,6 +166,48 @@ export function registerBudgets(mediator: Mediator, store: EventStore, model: Mo
       { type: "TransactionAssigned", data: { transactionId: tx.id, allocations } },
     ]);
     return { ok: true };
+  });
+
+  const days = (a: string, b: string) => Math.abs(Date.parse(a) - Date.parse(b)) / 86_400_000;
+
+  mediator.register<LinkTransfer>("LinkTransfer", (cmd) => {
+    const a = model.transactions.get(cmd.transactionId);
+    const b = model.transactions.get(cmd.counterpartTransactionId);
+    if (!a || !b) throw new Error("Unknown transaction");
+    if (a.accountId === b.accountId) throw new Error("A transfer must be between two different bank accounts");
+    if (a.amountCents + b.amountCents !== 0) throw new Error("A transfer's two sides must have the same amount, one in and one out");
+    for (const t of [a, b]) {
+      if (model.isAssigned(t)) throw new Error("Both transactions must be unassigned");
+    }
+    store.append(`transactions-${a.accountId}`, "any", [
+      { type: "TransferLinked", data: { transactionId: a.id, counterpartTransactionId: b.id } },
+    ]);
+    return { ok: true };
+  });
+
+  mediator.register<UnlinkTransfer>("UnlinkTransfer", (cmd) => {
+    const t = model.transactions.get(cmd.transactionId);
+    if (!t) throw new Error("Unknown transaction");
+    if (!t.transferWith) throw new Error("This transaction is not a transfer");
+    store.append(`transactions-${t.accountId}`, "any", [
+      { type: "TransferUnlinked", data: { transactionId: t.id, counterpartTransactionId: t.transferWith } },
+    ]);
+    return { ok: true };
+  });
+
+  mediator.register<GetTransferCandidates>("GetTransferCandidates", (q) => {
+    const tx = model.transactions.get(q.transactionId);
+    if (!tx) throw new Error("Unknown transaction");
+    return [...model.transactions.values()]
+      .filter((o) => o.accountId !== tx.accountId && o.amountCents === -tx.amountCents && !model.isAssigned(o) && days(o.date, tx.date) <= 7)
+      .sort((x, y) => days(x.date, tx.date) - days(y.date, tx.date))
+      .map((o) => ({
+        transactionId: o.id,
+        accountName: model.accounts.find((a) => a.id === o.accountId)?.name ?? "?",
+        date: o.date,
+        description: o.description,
+        amountCents: o.amountCents,
+      }));
   });
 
   mediator.register<GetBudget>("GetBudget", (q) => {
