@@ -14,6 +14,11 @@
   header { display:flex; gap:16px; align-items:center; padding:12px 16px; background:var(--card); border-bottom:1px solid var(--line); flex-wrap:wrap; }
   header a { color:var(--muted); text-decoration:none; font-weight:600; }
   header a.on { color:var(--link); }
+  .dropdown { position:relative; }
+  .menu { display:none; position:absolute; top:100%; left:-8px; min-width:260px; background:var(--card); border:1px solid var(--line); border-radius:8px; padding:4px 0; z-index:10; box-shadow:0 4px 12px rgba(0,0,0,.25); }
+  .dropdown:hover .menu, .dropdown:focus-within .menu { display:block; }
+  .menu a { display:block; padding:7px 12px; white-space:nowrap; color:var(--link); }
+  .menu a:hover { background:var(--bg); }
   header h1 { font-size:17px; margin:0 12px 0 0; }
   main { max-width:960px; margin:0 auto; padding:16px; }
   .card { background:var(--card); border:1px solid var(--line); border-radius:8px; margin-bottom:16px; overflow:hidden; }
@@ -42,7 +47,10 @@
 <body>
 <header>
   <h1>Our Budget</h1>
-  <a href="#/accounts" id="nav-accounts">Bank accounts</a>
+  <div class="dropdown">
+    <a href="#/accounts" id="nav-accounts">Bank accounts &#9662;</a>
+    <div class="menu" id="nav-menu"></div>
+  </div>
   <a href="#/budget" id="nav-budget">Budget</a>
 </header>
 <main id="app"></main>
@@ -74,7 +82,17 @@ function route() {
 }
 function goto(hash) { location.hash = hash; }
 
+async function loadNav() {
+  try {
+    const d = await api('ListBankAccounts');
+    document.getElementById('nav-menu').innerHTML =
+      d.accounts.map(a => `<a href="#/accounts/${encodeURIComponent(a.id)}">${esc(a.name)}</a>`).join('');
+  } catch (e) { /* the page shows its own error */ }
+}
+
 async function render() {
+  if (document.activeElement && document.activeElement.closest('.dropdown')) document.activeElement.blur();
+  loadNav();
   const { parts, q } = route();
   document.getElementById('nav-accounts').className = parts[0] === 'budget' ? '' : 'on';
   document.getElementById('nav-budget').className = parts[0] === 'budget' ? 'on' : '';
