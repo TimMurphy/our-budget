@@ -5,15 +5,14 @@ use cucumber::{gherkin::Step, given, then, when};
 use serde_json::{json, Value};
 
 fn txn_id(w: &BudgetWorld, account: &str, description: &str) -> String {
-    let acct = w.app.model.bank_account(account).expect("bank account").id.clone();
-    w.app
-        .model
-        .txns
-        .iter()
-        .find(|t| t.account == acct && t.description == description)
+    let c = w.app.store.conn();
+    let acct = our_budget::read::bank_account(c, account).unwrap().expect("bank account").id;
+    our_budget::read::txns_for_account(c, &acct)
+        .unwrap()
+        .into_iter()
+        .find(|t| t.description == description)
         .unwrap_or_else(|| panic!("no transaction {description} in {account}"))
         .id
-        .clone()
 }
 
 fn transactions(w: &mut BudgetWorld, account: &str, filter: &str, search: &str) -> Value {
@@ -128,4 +127,9 @@ fn link(w: &mut BudgetWorld, d1: String, a1: String, d2: String, a2: String) {
 fn unlink(w: &mut BudgetWorld, description: String, account: String) {
     let id = txn_id(w, &account, &description);
     w.ok("UnlinkTransfer", json!({ "transaction": id }));
+}
+
+#[given(expr = "transactions before {string} are not imported")]
+fn import_from(w: &mut BudgetWorld, date: String) {
+    w.app.import_from = date;
 }

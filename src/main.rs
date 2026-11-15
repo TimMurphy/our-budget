@@ -8,6 +8,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 const PORT: u16 = 4000;
+/// Statement rows before this date are not imported.
+const IMPORT_FROM: &str = "2026-11-01";
 const INDEX: &str = include_str!("index.html");
 
 fn main() {
@@ -21,6 +23,12 @@ fn run() -> Result<(), String> {
     let data = PathBuf::from("data");
     let store = EventStore::open(&data.join("databases").join("our-budget.db"))?;
     let mut app = App::new(store, data.join("back-accounts"))?;
+    app.import_from = IMPORT_FROM.to_string();
+    println!(
+        "read model tables: {} ({} events applied)",
+        if app.rebuilt { "rebuilt from the events" } else { "up to date" },
+        app.replayed
+    );
     let mediator = Arc::new(Mediator::default());
     setup::register_accounts(&mut app, &mediator, &data.join("secrets.md"))?;
     let app = Arc::new(Mutex::new(app));

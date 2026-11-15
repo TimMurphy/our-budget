@@ -6,4 +6,6 @@ pub mod handlers;
 pub mod mediator;
 pub mod model;
 pub mod money;
+pub mod projection;
+pub mod read;
 pub mod setup;

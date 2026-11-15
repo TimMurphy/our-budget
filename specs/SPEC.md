@@ -40,6 +40,9 @@ Rules that apply everywhere:
 - Money is stored as integer cents and shown in AUD as `$1,234.56`. Debits are negative.
 - Dates are ISO `YYYY-MM-DD` in storage and `DD/MM/YYYY` on screen.
 - Every state change is an event appended to the event store. Screens read from projections built from the events. Events are never updated or deleted.
+- The read models are tables in the database: `bank_accounts`, `transactions`, `assignments`, `import_failures`, `groups`, `budget_accounts` and `budgets`. Every query reads from them. They are updated by applying each event, in the same transaction that stores the event, so they are always up to date.
+- The tables are not rebuilt on every start. A `read_model_state` row records the last event applied. On start only the events stored after it are applied.
+- The tables are rebuilt from all the events only when there is no `read_model_state` row (a new database), it is from a different version of the program (`PROJECTION_VERSION` in `src/projection.rs` is bumped when the tables or what is written to them changes), or the stored events no longer match it, for example because events were deleted by hand.
 - The application is for one household. There are no logins.
 - The page follows the computer's light or dark theme. In the dark theme, links are amber, not blue, so they stay readable.
 
@@ -69,6 +72,7 @@ Rules that apply everywhere:
 - A row that cannot be parsed is skipped. The import records the file name and row number and carries on with the remaining rows. The failures are shown on the bank account screen.
 - A missing statement file is not an error. The account simply has nothing new.
 - Transactions are never edited or deleted by an import.
+- Only transactions dated on or after 1 Nov 2026 are imported. Earlier rows in a statement are ignored. Opening balances are as at close of business 30/10/2026, so earlier activity is already inside them.
 - NAB statements have a header row. Columns include: date (`DD Mon YY`), amount (negative for debits), account number, blank, type, transaction details. Without a header row, that column order is assumed.
 - Statements are read from `data/back-accounts/`, one file per bank account, named in the Accounts section below.
 - Westpac statements have a header row. Columns include: bank account, date (`DD/MM/YYYY`), narrative, debit amount, credit amount. A debit is stored as a negative amount.

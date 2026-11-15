@@ -192,3 +192,15 @@ Feature: Bank accounts
     And I link "To loan" in "Joint" with "First" in "Loan"
     When I link "To loan" in "Joint" with "Second" in "Loan"
     Then the request fails with "already linked"
+
+  Scenario: Transactions before the import start date are not imported
+    Given transactions before "2026-11-01" are not imported
+    And the "Joint" statement contains:
+      | date       | amount  | description |
+      | 2026-10-31 | -100.00 | Too early   |
+      | 2026-11-01 | -50.00  | First day   |
+      | 2026-11-02 | -20.00  | Later       |
+    When the statements are imported
+    Then "Joint" has 2 transactions
+    And "Joint" filtered by "all" lists "Later, First day"
+    And "Joint" has balance "$930.00"

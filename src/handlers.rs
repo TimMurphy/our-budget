@@ -1,10 +1,12 @@
-//! Commands and queries. Commands validate against the read model, then append events.
+//! Commands and queries. Commands validate against the read model tables, then append events.
 
 use crate::app::App;
 use crate::banks;
 use crate::dates::{day_number, is_month, month_of};
 use crate::mediator::Handler;
 use crate::model::{monthly_cents, slug, Event, Split, INCOME, UNGROUPED};
+use crate::read;
+use rusqlite::Connection;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 
@@ -67,7 +69,7 @@ fn register_bank_account(app: &mut App, v: &Value) -> Res {
         return Err(format!("unknown bank {bank}"));
     }
     let id = slug(&name);
-    if app.model.bank_account(&id).is_some() {
+    if read::bank_account(app.store.conn(), &id)?.is_some() {
         return ok();
     }
     let file = opt_text(v, "file").unwrap_or_else(|| format!("{id}.csv"));
@@ -81,24 +83,23 @@ fn register_bank_account(app: &mut App, v: &Value) -> Res {
 }
 
 fn list_bank_accounts(app: &mut App, _: &Value) -> Res {
-    let m = &app.model;
+    let c = app.store.conn();
+    let txns = read::all_txns(c)?;
     let mut total = 0;
-    let accounts: Vec<Value> = m
-        .bank_accounts
-        .iter()
-        .map(|a| {
-            let balance = m.balance(&a.id);
-            total += balance;
-            let unassigned = m.txns.iter().filter(|t| t.account == a.id && !t.is_assigned()).count();
-            json!({ "id": a.id, "name": a.name, "bank": a.bank, "balance_cents": balance, "unassigned": unassigned })
-        })
-        .collect();
+    let mut accounts = vec![];
+    for a in read::bank_accounts(c)? {
+        let balance = read::balance(c, &a.id)?;
+        total += balance;
+        let unassigned = txns.iter().filter(|t| t.account == a.id && !t.is_assigned()).count();
+        accounts.push(json!({ "id": a.id, "name": a.name, "bank": a.bank, "balance_cents": balance, "unassigned": unassigned }));
+    }
     Ok(json!({ "accounts": accounts, "total_cents": total }))
 }
 
 fn import_statements(app: &mut App, _: &Value) -> Res {
     let mut imported = 0;
-    for acct in app.model.bank_accounts.clone() {
+    let from = app.import_from.clone();
+    for acct in read::bank_accounts(app.store.conn())? {
         let Ok(content) = std::fs::read_to_string(app.statements_dir.join(&acct.file)) else {
             continue;
         };
@@ -106,12 +107,13 @@ fn import_statements(app: &mut App, _: &Value) -> Res {
         let mut events = vec![];
         for r in banks::parse(&acct.bank, &content) {
             match r {
+                Ok(row) if row.date.as_str() < from.as_str() => {}
                 Ok(row) => {
                     let base = format!("{}|{}|{}|{}", acct.id, row.date, row.cents, row.description);
                     let n = seen.entry(base.clone()).or_insert(0);
                     *n += 1;
                     let id = format!("{base}|{n}");
-                    if !app.model.txn_index.contains_key(&id) {
+                    if !read::txn_exists(app.store.conn(), &id)? {
                         imported += 1;
                         events.push(Event::TransactionImported {
                             id,
@@ -123,12 +125,7 @@ fn import_statements(app: &mut App, _: &Value) -> Res {
                     }
                 }
                 Err((row, reason)) => {
-                    let known = app
-                        .model
-                        .failures
-                        .iter()
-                        .any(|f| f.account == acct.id && f.row == row && f.reason == reason);
-                    if !known {
+                    if !read::failure_exists(app.store.conn(), &acct.id, row, &reason)? {
                         events.push(Event::ImportRowFailed { account: acct.id.clone(), file: acct.file.clone(), row, reason });
                     }
                 }
@@ -139,7 +136,7 @@ fn import_statements(app: &mut App, _: &Value) -> Res {
     Ok(json!({ "imported": imported }))
 }
 
-fn txn_status(t: &crate::model::Txn) -> &'static str {
+fn txn_status(t: &read::Txn) -> &'static str {
     if t.link.is_some() {
         "transfer"
     } else if t.is_assigned() {
@@ -150,54 +147,57 @@ fn txn_status(t: &crate::model::Txn) -> &'static str {
 }
 
 fn get_transactions(app: &mut App, v: &Value) -> Res {
-    let m = &app.model;
+    let c = app.store.conn();
     let id = text(v, "account")?;
-    let acct = m.bank_account(&id).ok_or("no such bank account")?;
+    let acct = read::bank_account(c, &id)?.ok_or("no such bank account")?;
     let filter = opt_text(v, "filter").unwrap_or_else(|| "all".into());
     if !["all", "unassigned", "assigned"].contains(&filter.as_str()) {
         return Err(format!("unknown filter {filter}"));
     }
     let search = opt_text(v, "search").unwrap_or_default().to_lowercase();
 
-    let mut mine: Vec<(usize, &crate::model::Txn)> = m.txns.iter().enumerate().filter(|(_, t)| t.account == acct.id).collect();
-    mine.sort_by(|a, b| (&a.1.date, a.0).cmp(&(&b.1.date, b.0)));
+    let mut mine = read::txns_for_account(c, &acct.id)?;
+    mine.sort_by(|a, b| a.date.cmp(&b.date)); // stable: same-day rows keep their import order
     let mut running = acct.opening_cents;
     let mut rows = vec![];
-    for (i, t) in mine {
+    for t in mine {
         running += t.cents;
-        rows.push((i, t, running));
+        rows.push((t, running));
     }
-    let unassigned: Vec<_> = rows.iter().filter(|(_, t, _)| !t.is_assigned()).collect();
-    let (unassigned_count, unassigned_cents) = (unassigned.len(), unassigned.iter().map(|(_, t, _)| t.cents).sum::<i64>());
+    let unassigned: Vec<&(read::Txn, i64)> = rows.iter().filter(|(t, _)| !t.is_assigned()).collect();
+    let (unassigned_count, unassigned_cents) = (unassigned.len(), unassigned.iter().map(|(t, _)| t.cents).sum::<i64>());
 
     rows.reverse();
-    let list: Vec<Value> = rows
-        .iter()
-        .filter(|(_, t, _)| match filter.as_str() {
+    let mut list = vec![];
+    for (t, bal) in &rows {
+        let shown = match filter.as_str() {
             "assigned" => t.is_assigned(),
             "unassigned" => !t.is_assigned(),
             _ => true,
-        })
-        .filter(|(_, t, _)| search.is_empty() || t.description.to_lowercase().contains(&search))
-        .map(|(_, t, bal)| {
-            let link = t.link.as_ref().and_then(|l| m.txn(l)).map(|o| {
-                json!({ "id": o.id, "account": m.bank_account(&o.account).map(|a| a.name.clone()), "date": o.date })
-            });
-            json!({
-                "id": t.id, "date": t.date, "description": t.description, "cents": t.cents,
-                "balance_cents": bal, "status": txn_status(t), "link": link,
-                "assignments": t.splits.iter().map(|s| json!({ "budget_account": m.account_name(&s.account), "cents": s.cents })).collect::<Vec<_>>(),
-            })
-        })
-        .collect();
-    let failures: Vec<Value> = m
-        .failures
-        .iter()
-        .filter(|f| f.account == acct.id)
+        };
+        if !shown || (!search.is_empty() && !t.description.to_lowercase().contains(&search)) {
+            continue;
+        }
+        let link = match t.link.as_ref().map(|l| read::txn(c, l)).transpose()?.flatten() {
+            Some(o) => Some(json!({
+                "id": o.id, "account": read::bank_account(c, &o.account)?.map(|a| a.name), "date": o.date })),
+            None => None,
+        };
+        let mut assignments = vec![];
+        for s in &t.splits {
+            assignments.push(json!({ "budget_account": read::account_name(c, &s.account)?, "cents": s.cents }));
+        }
+        list.push(json!({
+            "id": t.id, "date": t.date, "description": t.description, "cents": t.cents,
+            "balance_cents": bal, "status": txn_status(t), "link": link, "assignments": assignments,
+        }));
+    }
+    let failures: Vec<Value> = read::failures(c, &acct.id)?
+        .into_iter()
         .map(|f| json!({ "file": f.file, "row": f.row, "reason": f.reason }))
         .collect();
     Ok(json!({
-        "account": { "id": acct.id, "name": acct.name, "bank": acct.bank, "balance_cents": m.balance(&acct.id) },
+        "account": { "id": acct.id, "name": acct.name, "bank": acct.bank, "balance_cents": read::balance(c, &acct.id)? },
         "filter": filter, "transactions": list, "failures": failures,
         "unassigned_count": unassigned_count, "unassigned_cents": unassigned_cents,
     }))
@@ -214,13 +214,14 @@ fn assign_transactions(app: &mut App, v: &Value) -> Res {
     if ids.is_empty() {
         return Err("transactions is required".into());
     }
+    let c = app.store.conn();
     let mut events = vec![];
     let mut created: HashMap<String, String> = HashMap::new();
     let mut plan: Vec<(String, Vec<(String, i64)>)> = vec![];
 
     if let Some(name) = opt_text(v, "budget_account") {
         for id in &ids {
-            let t = app.model.txn(id).ok_or("no such transaction")?;
+            let t = read::txn(c, id)?.ok_or("no such transaction")?;
             plan.push((id.clone(), vec![(name.clone(), t.cents)]));
         }
     } else if let Some(splits) = v.get("splits").and_then(|x| x.as_array()) {
@@ -239,7 +240,7 @@ fn assign_transactions(app: &mut App, v: &Value) -> Res {
     }
 
     for (id, splits) in plan {
-        let t = app.model.txn(&id).ok_or("no such transaction")?;
+        let t = read::txn(c, &id)?.ok_or("no such transaction")?;
         if t.link.is_some() {
             return Err("transaction is linked as a transfer; unlink it first".into());
         }
@@ -248,7 +249,7 @@ fn assign_transactions(app: &mut App, v: &Value) -> Res {
             if *cents == 0 || (*cents < 0) != (t.cents < 0) {
                 return Err("each assigned amount must have the same sign as the transaction".into());
             }
-            let account = resolve_or_create(app, name, &mut created, &mut events)?;
+            let account = resolve_or_create(c, name, &mut created, &mut events)?;
             resolved.push(Split { account, cents: *cents });
         }
         if !resolved.is_empty() && resolved.iter().map(|s| s.cents).sum::<i64>() != t.cents {
@@ -260,12 +261,12 @@ fn assign_transactions(app: &mut App, v: &Value) -> Res {
     ok()
 }
 
-fn resolve_or_create(app: &App, name: &str, created: &mut HashMap<String, String>, events: &mut Vec<Event>) -> Result<String, String> {
-    if let Some(a) = app.model.budget_account(name) {
+fn resolve_or_create(c: &Connection, name: &str, created: &mut HashMap<String, String>, events: &mut Vec<Event>) -> Result<String, String> {
+    if let Some(a) = read::budget_account(c, name)? {
         if a.closed {
             return Err(format!("budget account {} is closed", a.name));
         }
-        return Ok(a.id.clone());
+        return Ok(a.id);
     }
     let key = name.to_lowercase();
     if let Some(id) = created.get(&key) {
@@ -282,34 +283,36 @@ fn resolve_or_create(app: &App, name: &str, created: &mut HashMap<String, String
 
 // ---------- transfers ----------
 
-fn transfer_problem(app: &App, a: &str, b: &str) -> Option<String> {
-    let (Some(x), Some(y)) = (app.model.txn(a), app.model.txn(b)) else {
-        return Some("no such transaction".into());
+fn transfer_problem(c: &Connection, a: &str, b: &str) -> Result<Option<String>, String> {
+    let (Some(x), Some(y)) = (read::txn(c, a)?, read::txn(c, b)?) else {
+        return Ok(Some("no such transaction".into()));
     };
     if x.account == y.account {
-        return Some("a transfer needs two different bank accounts".into());
+        return Ok(Some("a transfer needs two different bank accounts".into()));
     }
     if x.cents + y.cents != 0 || x.cents == 0 {
-        return Some("a transfer needs a matching debit and credit".into());
+        return Ok(Some("a transfer needs a matching debit and credit".into()));
     }
-    let (dx, dy) = (day_number(&x.date)?, day_number(&y.date)?);
+    let (Some(dx), Some(dy)) = (day_number(&x.date), day_number(&y.date)) else {
+        return Ok(Some("transaction has an invalid date".into()));
+    };
     if (dx - dy).abs() > TRANSFER_DAYS {
-        return Some(format!("transfers must be within {TRANSFER_DAYS} days of each other"));
+        return Ok(Some(format!("transfers must be within {TRANSFER_DAYS} days of each other")));
     }
-    for t in [x, y] {
+    for t in [&x, &y] {
         if t.link.is_some() {
-            return Some("transaction is already linked".into());
+            return Ok(Some("transaction is already linked".into()));
         }
         if !t.splits.is_empty() {
-            return Some("transaction is assigned; unassign it first".into());
+            return Ok(Some("transaction is assigned; unassign it first".into()));
         }
     }
-    None
+    Ok(None)
 }
 
 fn link_transfer(app: &mut App, v: &Value) -> Res {
     let (a, b) = (text(v, "a")?, text(v, "b")?);
-    if let Some(p) = transfer_problem(app, &a, &b) {
+    if let Some(p) = transfer_problem(app.store.conn(), &a, &b)? {
         return Err(p);
     }
     app.record(vec![Event::TransferLinked { a, b }])?;
@@ -318,21 +321,21 @@ fn link_transfer(app: &mut App, v: &Value) -> Res {
 
 fn unlink_transfer(app: &mut App, v: &Value) -> Res {
     let a = text(v, "transaction")?;
-    let b = app.model.txn(&a).ok_or("no such transaction")?.link.clone().ok_or("transaction is not linked")?;
+    let b = read::txn(app.store.conn(), &a)?.ok_or("no such transaction")?.link.ok_or("transaction is not linked")?;
     app.record(vec![Event::TransferUnlinked { a, b }])?;
     ok()
 }
 
 fn get_transfer_candidates(app: &mut App, v: &Value) -> Res {
     let id = text(v, "transaction")?;
-    let m = &app.model;
-    let list: Vec<Value> = m
-        .txns
-        .iter()
-        .filter(|t| t.id != id && transfer_problem(app, &id, &t.id).is_none())
-        .map(|t| json!({ "id": t.id, "date": t.date, "description": t.description, "cents": t.cents,
-            "account": m.bank_account(&t.account).map(|a| a.name.clone()) }))
-        .collect();
+    let c = app.store.conn();
+    let mut list = vec![];
+    for t in read::all_txns(c)? {
+        if t.id != id && transfer_problem(c, &id, &t.id)?.is_none() {
+            list.push(json!({ "id": t.id, "date": t.date, "description": t.description, "cents": t.cents,
+                "account": read::bank_account(c, &t.account)?.map(|a| a.name) }));
+        }
+    }
     Ok(json!({ "candidates": list }))
 }
 
@@ -340,7 +343,7 @@ fn get_transfer_candidates(app: &mut App, v: &Value) -> Res {
 
 fn add_group(app: &mut App, v: &Value) -> Res {
     let name = text(v, "name")?;
-    if app.model.group(&name).is_some() {
+    if read::group(app.store.conn(), &name)?.is_some() {
         return Err("a group with that name already exists".into());
     }
     let id = slug(&name);
@@ -349,12 +352,13 @@ fn add_group(app: &mut App, v: &Value) -> Res {
 }
 
 fn rename_group(app: &mut App, v: &Value) -> Res {
-    let id = app.model.group(&text(v, "id")?).ok_or("no such group")?.id.clone();
+    let c = app.store.conn();
+    let id = read::group(c, &text(v, "id")?)?.ok_or("no such group")?.id;
     let name = text(v, "name")?;
     if id == UNGROUPED {
         return Err("the Ungrouped group cannot be renamed".into());
     }
-    if app.model.group(&name).is_some_and(|g| g.id != id) {
+    if read::group(c, &name)?.is_some_and(|g| g.id != id) {
         return Err("a group with that name already exists".into());
     }
     app.record(vec![Event::GroupRenamed { id, name }])?;
@@ -362,11 +366,12 @@ fn rename_group(app: &mut App, v: &Value) -> Res {
 }
 
 fn remove_group(app: &mut App, v: &Value) -> Res {
-    let id = app.model.group(&text(v, "id")?).ok_or("no such group")?.id.clone();
+    let c = app.store.conn();
+    let id = read::group(c, &text(v, "id")?)?.ok_or("no such group")?.id;
     if id == UNGROUPED {
         return Err("the Ungrouped group cannot be removed".into());
     }
-    if app.model.budget_accounts.iter().any(|a| a.group == id && !a.closed) {
+    if read::budget_accounts(c)?.iter().any(|a| a.group == id && !a.closed) {
         return Err("a group can be removed only when it has no budget accounts".into());
     }
     app.record(vec![Event::GroupRemoved { id }])?;
@@ -384,31 +389,33 @@ fn reorder_groups(app: &mut App, v: &Value) -> Res {
 }
 
 fn create_budget_account(app: &mut App, v: &Value) -> Res {
+    let c = app.store.conn();
     let name = text(v, "name")?;
     let id = slug(&name);
-    if id.is_empty() || app.model.budget_account(&name).is_some() || app.model.budget_account(&id).is_some() {
+    if id.is_empty() || read::budget_account(c, &name)?.is_some() || read::budget_account(c, &id)?.is_some() {
         return Err("a budget account with that name already exists".into());
     }
     let group = match opt_text(v, "group") {
-        Some(g) => app.model.group(&g).ok_or("no such group")?.id.clone(),
+        Some(g) => read::group(c, &g)?.ok_or("no such group")?.id,
         None => UNGROUPED.into(),
     };
     app.record(vec![Event::BudgetAccountCreated { id: id.clone(), name, group }])?;
     Ok(json!({ "id": id }))
 }
 
-fn editable(app: &App, key: &str) -> Result<String, String> {
-    let a = app.model.budget_account(key).ok_or("no such budget account")?;
+fn editable(c: &Connection, key: &str) -> Result<String, String> {
+    let a = read::budget_account(c, key)?.ok_or("no such budget account")?;
     if a.id == INCOME {
         return Err("the Income account is fixed".into());
     }
-    Ok(a.id.clone())
+    Ok(a.id)
 }
 
 fn rename_budget_account(app: &mut App, v: &Value) -> Res {
-    let id = editable(app, &text(v, "id")?)?;
+    let c = app.store.conn();
+    let id = editable(c, &text(v, "id")?)?;
     let name = text(v, "name")?;
-    if app.model.budget_account(&name).is_some_and(|a| a.id != id) {
+    if read::budget_account(c, &name)?.is_some_and(|a| a.id != id) {
         return Err("a budget account with that name already exists".into());
     }
     app.record(vec![Event::BudgetAccountRenamed { id, name }])?;
@@ -416,9 +423,9 @@ fn rename_budget_account(app: &mut App, v: &Value) -> Res {
 }
 
 fn close_budget_account(app: &mut App, v: &Value) -> Res {
-    let id = editable(app, &text(v, "id")?)?;
-    let month = month_of(&app.today());
-    let report = app.model.month_report(&month);
+    let c = app.store.conn();
+    let id = editable(c, &text(v, "id")?)?;
+    let report = read::month_report(c, &month_of(&app.today()))?;
     if report.rows.get(&id).is_some_and(|r| r.available != 0) {
         return Err("a budget account can be closed only when its available amount is zero".into());
     }
@@ -427,14 +434,15 @@ fn close_budget_account(app: &mut App, v: &Value) -> Res {
 }
 
 fn move_budget_account(app: &mut App, v: &Value) -> Res {
-    let id = editable(app, &text(v, "id")?)?;
-    let group = app.model.group(&text(v, "group")?).ok_or("no such group")?.id.clone();
+    let c = app.store.conn();
+    let id = editable(c, &text(v, "id")?)?;
+    let group = read::group(c, &text(v, "group")?)?.ok_or("no such group")?.id;
     app.record(vec![Event::BudgetAccountMoved { id, group }])?;
     ok()
 }
 
 fn set_budgeted(app: &mut App, v: &Value) -> Res {
-    let account = editable(app, &text(v, "account")?)?;
+    let account = editable(app.store.conn(), &text(v, "account")?)?;
     let month = text(v, "month")?;
     if !is_month(&month) {
         return Err("month must be YYYY-MM".into());
@@ -444,7 +452,7 @@ fn set_budgeted(app: &mut App, v: &Value) -> Res {
 }
 
 fn set_auto_monthly(app: &mut App, v: &Value) -> Res {
-    let account = editable(app, &text(v, "account")?)?;
+    let account = editable(app.store.conn(), &text(v, "account")?)?;
     let period = opt_text(v, "period");
     let cents = match &period {
         Some(p) => {
@@ -462,34 +470,31 @@ fn set_auto_monthly(app: &mut App, v: &Value) -> Res {
 // ---------- budget ----------
 
 fn get_budget(app: &mut App, v: &Value) -> Res {
+    let c = app.store.conn();
     let month = opt_text(v, "month").unwrap_or_else(|| month_of(&app.today()));
     if !is_month(&month) {
         return Err("month must be YYYY-MM".into());
     }
-    let m = &app.model;
-    let report = m.month_report(&month);
-    let groups: Vec<Value> = m
-        .groups
-        .iter()
-        .map(|g| {
-            let accounts: Vec<Value> = m
-                .budget_accounts
-                .iter()
-                .filter(|a| a.group == g.id && !a.closed)
-                .filter_map(|a| report.rows.get(&a.id).map(|r| (a, r)))
-                .map(|(a, r)| {
-                    json!({
-                        "id": a.id, "name": a.name, "budgeted_cents": r.budgeted, "budget_set": r.budget_set,
-                        "spent_cents": r.spent, "available_cents": r.available,
-                        "auto": a.auto.as_ref().map(|(p, c)| json!({ "period": p, "cents": c })),
-                    })
+    let report = read::month_report(c, &month)?;
+    let budget_accounts = read::budget_accounts(c)?;
+    let mut groups = vec![];
+    for g in read::groups(c)? {
+        let accounts: Vec<Value> = budget_accounts
+            .iter()
+            .filter(|a| a.group == g.id && !a.closed)
+            .filter_map(|a| report.rows.get(&a.id).map(|r| (a, r)))
+            .map(|(a, r)| {
+                json!({
+                    "id": a.id, "name": a.name, "budgeted_cents": r.budgeted, "budget_set": r.budget_set,
+                    "spent_cents": r.spent, "available_cents": r.available,
+                    "auto": a.auto.as_ref().map(|(p, c)| json!({ "period": p, "cents": c })),
                 })
-                .collect();
-            let sum = |k: &str| accounts.iter().map(|a| a[k].as_i64().unwrap_or(0)).sum::<i64>();
-            json!({ "id": g.id, "name": g.name, "budgeted_cents": sum("budgeted_cents"),
-                "spent_cents": sum("spent_cents"), "available_cents": sum("available_cents"), "accounts": accounts })
-        })
-        .collect();
+            })
+            .collect();
+        let sum = |k: &str| accounts.iter().map(|a| a[k].as_i64().unwrap_or(0)).sum::<i64>();
+        groups.push(json!({ "id": g.id, "name": g.name, "budgeted_cents": sum("budgeted_cents"),
+            "spent_cents": sum("spent_cents"), "available_cents": sum("available_cents"), "accounts": accounts }));
+    }
     Ok(json!({
         "month": month,
         "income_last_month_cents": report.prev_income,
