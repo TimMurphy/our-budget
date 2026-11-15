@@ -37,6 +37,13 @@
   .banner.bad { border-color:var(--bad); color:var(--bad); }
   .drop { outline:2px dashed var(--accent); outline-offset:-4px; }
   tr[draggable=true] { cursor:grab; }
+  dialog { background:var(--card); color:var(--text); border:1px solid var(--line); border-radius:8px; padding:16px; min-width:min(380px, 92vw); }
+  dialog::backdrop { background:rgba(0,0,0,.5); }
+  dialog h2 { margin:0 0 12px; font-size:16px; }
+  dialog label { display:block; margin-bottom:12px; color:var(--muted); font-size:13px; }
+  dialog label select, dialog label input { display:block; width:100%; margin-top:4px; font-size:15px; color:var(--text); }
+  dialog label[hidden] { display:none; }
+  dialog .error { min-height:1.2em; margin:0 0 8px; }
   td.assign { cursor:pointer; }
   td.assign:hover { background:var(--bg); }
   .tag { display:inline-block; font-size:12px; padding:1px 7px; border-radius:10px; background:var(--line); margin-right:4px; }
@@ -164,8 +171,8 @@ async function transactionsPage(account, q) {
     sel.focus();
     try { sel.showPicker(); } catch (e) { /* not supported: the list opens on click */ }
     sel.onchange = () => {
-      let name = sel.value;
-      if (name === '__new') { name = (prompt('New budget account name') || '').trim(); if (!name) return render(); }
+      const name = sel.value;
+      if (name === '__new') { sel.onblur = null; return newAccountDialog(b.groups, t.id); }
       act(() => api('AssignTransactions', name ? { transactions: [t.id], budget_account: name } : { transactions: [t.id] }));
     };
     sel.onblur = () => render();
@@ -181,6 +188,44 @@ async function transactionsPage(account, q) {
   $app.querySelectorAll('[data-transfer]').forEach(btn => btn.onclick = () => btn.dataset.linked
     ? act(() => api('UnlinkTransfer', { transaction: btn.dataset.transfer }))
     : transferDialog(d.transactions.find(t => t.id === btn.dataset.transfer)));
+}
+
+// Creates a budget account (optionally in a new group) and assigns the transaction to it.
+function newAccountDialog(groups, transactionId) {
+  const dlg = document.createElement('dialog');
+  dlg.innerHTML = `<div class="dlg"><h2>New budget account</h2>
+    <label>Group<select id="na-group">${groups.map(g => `<option value="${esc(g.id)}">${esc(g.name)}</option>`).join('')}
+      <option value="__group">+ Add group…</option></select></label>
+    <label id="na-group-name-row" hidden>New group name<input id="na-group-name"></label>
+    <label>Budget account name<input id="na-name"></label>
+    <p class="error" id="na-error"></p>
+    <div class="row"><button class="primary" id="na-create">Create and assign</button><button id="na-cancel">Cancel</button></div></div>`;
+  document.body.appendChild(dlg);
+  const $ = id => dlg.querySelector('#' + id);
+  $('na-group').value = 'ungrouped';
+  $('na-group').onchange = () => {
+    $('na-group-name-row').hidden = $('na-group').value !== '__group';
+    if (!$('na-group-name-row').hidden) $('na-group-name').focus();
+  };
+  $('na-cancel').onclick = () => dlg.close();
+  dlg.addEventListener('close', () => { dlg.remove(); render(); });
+  $('na-create').onclick = async () => {
+    try {
+      const name = $('na-name').value.trim();
+      if (!name) throw new Error('Enter a budget account name');
+      let group = $('na-group').value;
+      if (group === '__group') {
+        const groupName = $('na-group-name').value.trim();
+        if (!groupName) throw new Error('Enter a group name');
+        group = (await api('AddGroup', { name: groupName })).id;
+      }
+      await api('CreateBudgetAccount', { name, group });
+      await api('AssignTransactions', { transactions: [transactionId], budget_account: name });
+      dlg.close();
+    } catch (e) { $('na-error').textContent = e.message; }
+  };
+  dlg.showModal();
+  $('na-name').focus();
 }
 
 function splitDialog(t) {
