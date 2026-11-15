@@ -8,6 +8,24 @@ This file contains all the specifications for the application. It is updated whe
 
 Opening balances are as at close of business 30/10/2026 and are kept in [secrets.md](secrets.md), which is not committed.
 
+## Running
+
+- `cargo run` starts the application on http://localhost:4000. It serves the web page and a JSON API (`POST /api/<RequestType>`) that forwards to the mediator.
+- On Windows, if `cargo` cannot find the C++ build tools, run it as `./cargo.ps1 run` (or `./cargo.ps1 test --test specs`). The script finds a Visual Studio C++ toolset that has the headers and libraries, sets up the environment and then runs cargo.
+- `cargo test --test specs` runs every feature file in `specs/`. The steps drive the application through the mediator, against an in-memory event store and a temporary statements folder.
+- Opening balances are read from `specs/secrets.md`, one line per bank account in the form `- <account name>: <amount>`, for example `- NAB - Home Loan: -123456.78`. A missing line means an opening balance of $0.00.
+
+## Building
+
+- `cargo build --release` produces one native executable for the operating system it is built on. The web page is embedded in it, so there is nothing else to install. The database and statements are read from `data/` relative to where the program is started.
+- Windows, Linux and macOS each have a native build. Each is built on that operating system, because the bundled SQLite is C code that needs that system's C compiler. Cross-compiling to macOS is not supported.
+- Targets:
+    - Windows: `x86_64-pc-windows-msvc`
+    - Linux: `x86_64-unknown-linux-gnu`
+    - macOS: `aarch64-apple-darwin`, and `x86_64-apple-darwin` for Intel Macs
+- The program serves the web page on `127.0.0.1` only, so it can be reached from the same computer only. It has no window of its own. Use a web browser.
+- macOS is not tested.
+
 ## Concepts
 
 - **Bank account:** A real account at a bank. Its transactions are imported from downloaded CSV statements.
@@ -22,6 +40,7 @@ Rules that apply everywhere:
 - Dates are ISO `YYYY-MM-DD` in storage and `DD/MM/YYYY` on screen.
 - Every state change is an event appended to the event store. Screens read from projections built from the events. Events are never updated or deleted.
 - The application is for one household. There are no logins.
+- The page follows the computer's light or dark theme. In the dark theme, links are amber, not blue, so they stay readable.
 
 ## Bank Accounts
 
@@ -48,6 +67,8 @@ Rules that apply everywhere:
 - A row that cannot be parsed is skipped. The import records the file name and row number and carries on with the remaining rows. The failures are shown on the bank account screen.
 - A missing statement file is not an error. The account simply has nothing new.
 - Transactions are never edited or deleted by an import.
+- NAB statements have no header row. Columns are: date (`DD Mon YY`), amount (negative for debits), account number, blank, type, details. A header row is used if present.
+- Westpac statements have a header row. Columns include: bank account, date (`DD/MM/YYYY`), narrative, debit amount, credit amount. A debit is stored as a negative amount.
 
 ### Transaction list
 
@@ -69,7 +90,8 @@ Rules that apply everywhere:
 
 ### Transfers between bank accounts
 
-- A debit in one bank account and a matching credit in another on the same day, or a few days apart, is a transfer.
+- A debit in one bank account and a matching credit in another, of the same amount and no more than 5 days apart, is a transfer.
+- A transaction that is assigned to budget accounts must be unassigned before it can be linked. A linked transaction cannot be assigned.
 - A transaction can be linked to its matching transaction in another bank account.
 - Linked transactions count as Assigned and do not affect the budget, since the money did not leave the household.
 - A link can be removed. Both transactions then return to Unassigned.
@@ -134,8 +156,11 @@ data/bank-transactions/joint.csv
 - A budget account can be renamed. Its history is kept.
 - A budget account can be closed once its Available is zero. A closed account no longer appears on the budget screen or in the assign list, and its past assignments remain.
 - New budget accounts start in the group "Ungrouped".
+- Closing is checked against the Available amount for the current month.
 
 ### Groups
+
+- "Ungrouped" is a built-in group. It cannot be renamed or removed.
 
 - A group has a name. Names are unique, ignoring case.
 - Groups can be added, renamed and reordered.

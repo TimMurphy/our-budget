@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Our Budget</title>
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --text:#1c2430; --muted:#667085; --line:#e4e7ec; --accent:#2457d6; --bad:#c0262d; --good:#157f3c; }
+  :root { --link:#2457d6; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#12161c; --card:#1b212b; --text:#e8ecf2; --muted:#98a2b3; --line:#2b3340; --accent:#6c93ff; --link:#f5c451; --bad:#ff6b72; --good:#4cc57c; } }
+  * { box-sizing: border-box; }
+  a { color:var(--link); }
+  body { margin:0; font:15px/1.4 system-ui, sans-serif; background:var(--bg); color:var(--text); }
+  header { display:flex; gap:16px; align-items:center; padding:12px 16px; background:var(--card); border-bottom:1px solid var(--line); flex-wrap:wrap; }
+  header a { color:var(--muted); text-decoration:none; font-weight:600; }
+  header a.on { color:var(--link); }
+  header h1 { font-size:17px; margin:0 12px 0 0; }
+  main { max-width:960px; margin:0 auto; padding:16px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:8px; margin-bottom:16px; overflow:hidden; }
+  .card h2 { font-size:15px; margin:0; padding:10px 12px; border-bottom:1px solid var(--line); display:flex; justify-content:space-between; gap:8px; }
+  table { width:100%; border-collapse:collapse; }
+  td, th { padding:7px 12px; text-align:left; border-bottom:1px solid var(--line); }
+  tr:last-child td { border-bottom:0; }
+  th { color:var(--muted); font-weight:600; font-size:13px; }
+  .num { text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap; }
+  .neg { color:var(--bad); } .pos { color:var(--good); } .muted { color:var(--muted); }
+  button, select, input { font:inherit; color:inherit; background:var(--card); border:1px solid var(--line); border-radius:6px; padding:5px 9px; }
+  button { cursor:pointer; } button.primary { background:var(--accent); color:#fff; border-color:var(--accent); }
+  .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:12px; }
+  .error { color:var(--bad); margin:0 0 12px; }
+  .banner { padding:8px 12px; border-radius:6px; background:var(--card); border:1px solid var(--line); margin-bottom:12px; }
+  .banner.bad { border-color:var(--bad); color:var(--bad); }
+  .drop { outline:2px dashed var(--accent); outline-offset:-4px; }
+  tr[draggable=true] { cursor:grab; }
+  .tag { display:inline-block; font-size:12px; padding:1px 7px; border-radius:10px; background:var(--line); margin-right:4px; }
+  input.amt { width:110px; text-align:right; }
+  @media (max-width:600px) { td, th { padding:6px 8px; } main { padding:8px; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>Our Budget</h1>
+  <a href="#/accounts" id="nav-accounts">Bank accounts</a>
+  <a href="#/budget" id="nav-budget">Budget</a>
+</header>
+<main id="app"></main>
+<script>
+const $app = document.getElementById('app');
+const fmt = c => (c < 0 ? '-' : '') + '$' + (Math.abs(c) / 100).toLocaleString('en-AU', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const dmy = d => d.split('-').reverse().join('/');
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;' }[c]));
+const cls = c => c < 0 ? 'neg' : '';
+const toCents = s => { const n = Number(String(s).replace(/[$,\s]/g, '')); return Number.isFinite(n) ? Math.round(n * 100) : null; };
+const dollars = c => (c / 100).toFixed(2);
+
+async function api(name, body = {}) {
+  const r = await fetch('/api/' + name, { method: 'POST', body: JSON.stringify(body) });
+  const j = await r.json();
+  if (!r.ok) throw new Error(j.error || 'Request failed');
+  return j;
+}
+let error = '';
+async function act(fn) {
+  try { error = ''; await fn(); } catch (e) { error = e.message; }
+  render();
+}
+const errHtml = () => error ? `<p class="error">${esc(error)}</p>` : '';
+
+function route() {
+  const [path, query] = location.hash.slice(1).split('?');
+  return { parts: path.split('/').filter(Boolean), q: new URLSearchParams(query || '') };
+}
+function goto(hash) { location.hash = hash; }
+
+async function render() {
+  const { parts, q } = route();
+  document.getElementById('nav-accounts').className = parts[0] === 'budget' ? '' : 'on';
+  document.getElementById('nav-budget').className = parts[0] === 'budget' ? 'on' : '';
+  try {
+    if (parts[0] === 'budget') await budgetPage(q);
+    else if (parts[0] === 'accounts' && parts[1]) await transactionsPage(decodeURIComponent(parts[1]), q);
+    else await accountsPage();
+  } catch (e) { $app.innerHTML = `<p class="error">${esc(e.message)}</p>`; }
+}
+window.addEventListener('hashchange', () => { error = ''; render(); });
+
+// ---------- bank accounts ----------
+async function accountsPage() {
+  const d = await api('ListBankAccounts');
+  $app.innerHTML = errHtml() + `
+    <div class="row"><button id="import">Import now</button><span id="imported" class="muted"></span></div>
+    <div class="card"><h2>Bank accounts</h2><table>
+      <tr><th>Account</th><th>Bank</th><th class="num">Unassigned</th><th class="num">Balance</th></tr>
+      ${d.accounts.map(a => `<tr><td><a href="#/accounts/${encodeURIComponent(a.id)}">${esc(a.name)}</a></td><td>${esc(a.bank)}</td>
+        <td class="num">${a.unassigned}</td><td class="num ${cls(a.balance_cents)}">${fmt(a.balance_cents)}</td></tr>`).join('')}
+      <tr><th colspan="3">Total</th><th class="num ${cls(d.total_cents)}">${fmt(d.total_cents)}</th></tr>
+    </table></div>`;
+  document.getElementById('import').onclick = async () => {
+    try { const r = await api('ImportStatements'); await accountsPage(); document.getElementById('imported').textContent = r.imported + ' new transactions'; }
+    catch (e) { error = e.message; render(); }
+  };
+}
+
+let selected = new Set();
+async function transactionsPage(account, q) {
+  const filter = q.get('filter') || 'all', search = q.get('search') || '';
+  const d = await api('GetTransactions', { account, filter, search });
+  const base = '#/accounts/' + encodeURIComponent(account);
+  $app.innerHTML = errHtml() + `
+    <p><a href="#/accounts">&larr; Bank accounts</a></p>
+    <h2 style="margin:0 0 4px">${esc(d.account.name)} <span class="${cls(d.account.balance_cents)}">${fmt(d.account.balance_cents)}</span></h2>
+    <p class="muted">${d.unassigned_count} unassigned, totalling ${fmt(d.unassigned_cents)}</p>
+    ${d.failures.length ? `<div class="banner bad">${d.failures.length} statement row(s) could not be imported: ${d.failures.map(f => `${esc(f.file)} row ${f.row} (${esc(f.reason)})`).join(', ')}</div>` : ''}
+    <div class="row">
+      ${['all', 'unassigned', 'assigned'].map(f => `<a href="${base}?filter=${f}&search=${encodeURIComponent(search)}"><button class="${f === filter ? 'primary' : ''}">${f[0].toUpperCase() + f.slice(1)}</button></a>`).join('')}
+      <input id="search" placeholder="Search description" value="${esc(search)}">
+    </div>
+    <div class="row" id="bulk"><input id="bulk-account" list="budget-accounts" placeholder="Budget account">
+      <button id="bulk-assign">Assign selected</button><button id="bulk-clear">Unassign selected</button>
+      <datalist id="budget-accounts"></datalist></div>
+    <div class="card"><table>
+      <tr><th></th><th>Date</th><th>Description</th><th>Assigned to</th><th class="num">Amount</th><th class="num">Balance</th><th></th></tr>
+      ${d.transactions.map(t => `<tr>
+        <td><input type="checkbox" data-id="${esc(t.id)}" ${selected.has(t.id) ? 'checked' : ''}></td>
+        <td>${dmy(t.date)}</td><td>${esc(t.description)}</td>
+        <td>${t.status === 'transfer' ? `<span class="tag">Transfer: ${esc(t.link?.account)}</span>` :
+              t.assignments.map(a => `<span class="tag">${esc(a.budget_account)} ${t.assignments.length > 1 ? fmt(a.cents) : ''}</span>`).join('') || '<span class="muted">Unassigned</span>'}</td>
+        <td class="num ${cls(t.cents)}">${fmt(t.cents)}</td><td class="num">${fmt(t.balance_cents)}</td>
+        <td class="num"><button data-split="${esc(t.id)}">Split</button> <button data-transfer="${esc(t.id)}" data-linked="${t.link ? 1 : ''}">${t.link ? 'Unlink' : 'Transfer'}</button></td></tr>`).join('')
+        || '<tr><td colspan="7" class="muted">No transactions</td></tr>'}
+    </table></div><div id="dialog"></div>`;
+  const b = await api('GetBudget', {});
+  document.getElementById('budget-accounts').innerHTML =
+    [{ name: 'Income' }, ...b.groups.flatMap(g => g.accounts)].map(a => `<option value="${esc(a.name)}">`).join('');
+  document.getElementById('search').onchange = e => goto(`${base}?filter=${filter}&search=${encodeURIComponent(e.target.value)}`);
+  $app.querySelectorAll('input[type=checkbox]').forEach(c => c.onchange = () => c.checked ? selected.add(c.dataset.id) : selected.delete(c.dataset.id));
+  document.getElementById('bulk-assign').onclick = () => act(async () => {
+    await api('AssignTransactions', { transactions: [...selected], budget_account: document.getElementById('bulk-account').value }); selected.clear(); });
+  document.getElementById('bulk-clear').onclick = () => act(async () => { await api('AssignTransactions', { transactions: [...selected] }); selected.clear(); });
+  $app.querySelectorAll('[data-split]').forEach(btn => btn.onclick = () => splitDialog(d.transactions.find(t => t.id === btn.dataset.split)));
+  $app.querySelectorAll('[data-transfer]').forEach(btn => btn.onclick = () => btn.dataset.linked
+    ? act(() => api('UnlinkTransfer', { transaction: btn.dataset.transfer }))
+    : transferDialog(d.transactions.find(t => t.id === btn.dataset.transfer)));
+}
+
+function splitDialog(t) {
+  const rows = t.assignments.length ? t.assignments : [{ budget_account: '', cents: t.cents }];
+  const el = document.getElementById('dialog');
+  const draw = list => {
+    el.innerHTML = `<div class="card"><h2>Assign ${esc(t.description)} (${fmt(t.cents)})</h2><table>
+      ${list.map((r, i) => `<tr><td><input data-n="${i}" list="budget-accounts" value="${esc(r.budget_account)}" placeholder="Budget account"></td>
+        <td class="num"><input class="amt" data-a="${i}" value="${dollars(r.cents)}"></td></tr>`).join('')}
+      <tr><td><button id="add-split">Add split</button></td><td class="num"><button class="primary" id="save-split">Save</button> <button id="cancel-split">Cancel</button></td></tr></table></div>`;
+    const read = () => list.map((_, i) => ({ budget_account: el.querySelector(`[data-n="${i}"]`).value.trim(), cents: toCents(el.querySelector(`[data-a="${i}"]`).value) }));
+    document.getElementById('add-split').onclick = () => draw([...read(), { budget_account: '', cents: 0 }]);
+    document.getElementById('cancel-split').onclick = () => { el.innerHTML = ''; };
+    document.getElementById('save-split').onclick = () => act(() => api('AssignTransactions', { transactions: [t.id], splits: read().filter(s => s.budget_account) }));
+  };
+  draw(rows); el.scrollIntoView();
+}
+
+async function transferDialog(t) {
+  const { candidates } = await api('GetTransferCandidates', { transaction: t.id });
+  const el = document.getElementById('dialog');
+  el.innerHTML = `<div class="card"><h2>Link ${esc(t.description)} to a matching transaction</h2><table>
+    ${candidates.map(c => `<tr><td>${dmy(c.date)}</td><td>${esc(c.account)}</td><td>${esc(c.description)}</td><td class="num">${fmt(c.cents)}</td>
+      <td class="num"><button data-link="${esc(c.id)}">Link</button></td></tr>`).join('') || '<tr><td class="muted">No matching transactions</td></tr>'}
+    </table></div>`;
+  el.querySelectorAll('[data-link]').forEach(b => b.onclick = () => act(() => api('LinkTransfer', { a: t.id, b: b.dataset.link })));
+  el.scrollIntoView();
+}
+
+// ---------- budget ----------
+const shiftMonth = (m, by) => { const [y, mo] = m.split('-').map(Number); const i = y * 12 + mo - 1 + by; return `${Math.floor(i / 12)}-${String(i % 12 + 1).padStart(2, '0')}`; };
+const PERIODS = ['Yearly', 'Quarterly', 'Monthly', 'Fortnight', 'Weekly'];
+
+async function budgetPage(q) {
+  const d = await api('GetBudget', { month: q.get('month') || undefined });
+  const link = m => `#/budget?month=${m}`;
+  $app.innerHTML = errHtml() + `
+    <div class="row"><a href="${link(shiftMonth(d.month, -1))}"><button>&larr;</button></a><strong>${d.month}</strong>
+      <a href="${link(shiftMonth(d.month, 1))}"><button>&rarr;</button></a>
+      <input id="new-group" placeholder="New group"><button id="add-group">Add group</button></div>
+    <div class="banner">Income last month <strong>${fmt(d.income_last_month_cents)}</strong>
+      ${d.overspent_last_month_cents ? ` &minus; overspent <strong class="neg">${fmt(d.overspent_last_month_cents)}</strong>` : ''}
+      &minus; budgeted <strong>${fmt(d.total_budgeted_cents)}</strong> = left to budget <strong class="${cls(d.left_to_budget_cents)}">${fmt(d.left_to_budget_cents)}</strong></div>
+    ${d.over_budgeted_cents ? `<div class="banner bad">Over budgeted by ${fmt(d.over_budgeted_cents)}</div>` : ''}
+    ${d.groups.map(g => `<div class="card" data-group="${esc(g.id)}"><h2><span>${esc(g.name)}</span>
+        <span>${g.id === 'ungrouped' ? '' : `<button data-rename="${esc(g.id)}">Rename</button> <button data-remove="${esc(g.id)}">Remove</button>`}</span></h2>
+      <table><tr><th>Budget account</th><th class="num">Budgeted</th><th class="num">Spent</th><th class="num">Available</th><th>Auto monthly</th><th></th></tr>
+      ${g.accounts.map(a => `<tr draggable="true" data-account="${esc(a.id)}"><td>${esc(a.name)}</td>
+        <td class="num"><input class="amt" data-budget="${esc(a.id)}" value="${dollars(a.budgeted_cents)}" ${a.budget_set ? '' : 'style="font-style:italic"'}></td>
+        <td class="num ${cls(a.spent_cents)}">${fmt(a.spent_cents)}</td><td class="num ${cls(a.available_cents)}">${fmt(a.available_cents)}</td>
+        <td><select data-auto="${esc(a.id)}"><option value="">Off</option>${PERIODS.map(p => `<option ${a.auto?.period === p ? 'selected' : ''}>${p}</option>`).join('')}</select>
+          <input class="amt" data-auto-amount="${esc(a.id)}" value="${a.auto ? dollars(a.auto.cents) : ''}" placeholder="0.00"></td>
+        <td class="num"><button data-rename-account="${esc(a.id)}">Rename</button> <button data-close="${esc(a.id)}">Close</button></td></tr>`).join('')
+        || '<tr><td colspan="6" class="muted">No budget accounts</td></tr>'}
+      <tr><th>Total</th><th class="num">${fmt(g.budgeted_cents)}</th><th class="num">${fmt(g.spent_cents)}</th><th class="num">${fmt(g.available_cents)}</th><th colspan="2"></th></tr></table></div>`).join('')}
+    <div class="row"><input id="new-account" placeholder="New budget account"><button id="add-account">Add budget account</button></div>`;
+
+  document.getElementById('add-group').onclick = () => act(() => api('AddGroup', { name: document.getElementById('new-group').value }));
+  document.getElementById('add-account').onclick = () => act(() => api('CreateBudgetAccount', { name: document.getElementById('new-account').value }));
+  $app.querySelectorAll('[data-rename]').forEach(b => b.onclick = () => { const n = prompt('New group name'); if (n) act(() => api('RenameGroup', { id: b.dataset.rename, name: n })); });
+  $app.querySelectorAll('[data-remove]').forEach(b => b.onclick = () => act(() => api('RemoveGroup', { id: b.dataset.remove })));
+  $app.querySelectorAll('[data-rename-account]').forEach(b => b.onclick = () => { const n = prompt('New name'); if (n) act(() => api('RenameBudgetAccount', { id: b.dataset.renameAccount, name: n })); });
+  $app.querySelectorAll('[data-close]').forEach(b => b.onclick = () => act(() => api('CloseBudgetAccount', { id: b.dataset.close })));
+  $app.querySelectorAll('[data-budget]').forEach(i => i.onchange = () => act(() => {
+    const c = toCents(i.value); if (c === null) throw new Error('Enter an amount');
+    return api('SetBudgeted', { account: i.dataset.budget, month: d.month, cents: c }); }));
+  const saveAuto = id => act(() => {
+    const period = $app.querySelector(`[data-auto="${id}"]`).value;
+    const c = toCents($app.querySelector(`[data-auto-amount="${id}"]`).value || '0');
+    return api('SetAutoMonthly', period ? { account: id, period, cents: c } : { account: id }); });
+  $app.querySelectorAll('[data-auto]').forEach(s => s.onchange = () => saveAuto(s.dataset.auto));
+  $app.querySelectorAll('[data-auto-amount]').forEach(s => s.onchange = () => saveAuto(s.dataset.autoAmount));
+
+  // drag and drop between groups
+  let dragged = null;
+  $app.querySelectorAll('[data-account]').forEach(r => r.ondragstart = e => { dragged = r.dataset.account; e.dataTransfer.setData('text/plain', dragged); });
+  $app.querySelectorAll('[data-group]').forEach(card => {
+    card.ondragover = e => { e.preventDefault(); card.classList.add('drop'); };
+    card.ondragleave = () => card.classList.remove('drop');
+    card.ondrop = e => { e.preventDefault(); card.classList.remove('drop'); if (dragged) act(() => api('MoveBudgetAccount', { id: dragged, group: card.dataset.group })); };
+  });
+}
+
+render();
+</script>
+</body>
+</html>
