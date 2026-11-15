@@ -44,6 +44,7 @@
   dialog label select, dialog label input { display:block; width:100%; margin-top:4px; font-size:15px; color:var(--text); }
   dialog label[hidden] { display:none; }
   dialog .error { min-height:1.2em; margin:0 0 8px; }
+  th.sortable { cursor:pointer; user-select:none; white-space:nowrap; }
   td.assign { cursor:pointer; }
   td.assign:hover { background:var(--bg); }
   .tag { display:inline-block; font-size:12px; padding:1px 7px; border-radius:10px; background:var(--line); margin-right:4px; }
@@ -128,11 +129,18 @@ async function accountsPage() {
   };
 }
 
+// Newest first ('desc') unless the viewer reversed it. Remembered in this browser.
+function dateOrder() {
+  try { return localStorage.getItem('dateOrder') === 'asc' ? 'asc' : 'desc'; } catch (e) { return 'desc'; }
+}
+
 let selected = new Set();
 async function transactionsPage(account, q) {
   const filter = q.get('filter') || 'all', search = q.get('search') || '';
   const d = await api('GetTransactions', { account, filter, search });
   const b = await api('GetBudget', {});
+  const order = dateOrder();
+  const txns = order === 'asc' ? [...d.transactions].reverse() : d.transactions;
   const base = '#/accounts/' + encodeURIComponent(account);
   $app.innerHTML = errHtml() + `
     <p><a href="#/accounts">&larr; Bank accounts</a></p>
@@ -147,8 +155,8 @@ async function transactionsPage(account, q) {
       <button id="bulk-assign">Assign selected</button><button id="bulk-clear">Unassign selected</button>
       <datalist id="budget-accounts"></datalist></div>
     <div class="card"><table>
-      <tr><th></th><th>Date</th><th>Description</th><th>Assigned to</th><th class="num">Amount</th><th class="num">Balance</th><th></th></tr>
-      ${d.transactions.map(t => `<tr>
+      <tr><th></th><th id="sort-date" class="sortable" title="Click to reverse the order">Date ${order === 'asc' ? '&#9650;' : '&#9660;'}</th><th>Description</th><th>Assigned to</th><th class="num">Amount</th><th class="num">Balance</th><th></th></tr>
+      ${txns.map(t => `<tr>
         <td><input type="checkbox" data-id="${esc(t.id)}" ${selected.has(t.id) ? 'checked' : ''}></td>
         <td>${dmy(t.date)}</td><td>${esc(t.description)}</td>
         <td ${t.status === 'transfer' ? '' : `class="assign" title="Click to assign" data-assign="${esc(t.id)}"`}>${t.status === 'transfer' ? `<span class="tag">Transfer: ${esc(t.link?.account)}</span>` :
@@ -157,6 +165,10 @@ async function transactionsPage(account, q) {
         <td class="num"><button data-split="${esc(t.id)}">Split</button> <button data-transfer="${esc(t.id)}" data-linked="${t.link ? 1 : ''}">${t.link ? 'Unlink' : 'Transfer'}</button></td></tr>`).join('')
         || '<tr><td colspan="7" class="muted">No transactions</td></tr>'}
     </table></div><div id="dialog"></div>`;
+  document.getElementById('sort-date').onclick = () => {
+    try { localStorage.setItem('dateOrder', order === 'asc' ? 'desc' : 'asc'); } catch (e) { /* storage unavailable: order is not remembered */ }
+    render();
+  };
   $app.querySelectorAll('td[data-assign]').forEach(td => td.onclick = () => {
     if (td.querySelector('select')) return;
     const t = d.transactions.find(x => x.id === td.dataset.assign);
