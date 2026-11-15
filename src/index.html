@@ -32,6 +32,8 @@
   .banner.bad { border-color:var(--bad); color:var(--bad); }
   .drop { outline:2px dashed var(--accent); outline-offset:-4px; }
   tr[draggable=true] { cursor:grab; }
+  td.assign { cursor:pointer; }
+  td.assign:hover { background:var(--bg); }
   .tag { display:inline-block; font-size:12px; padding:1px 7px; border-radius:10px; background:var(--line); margin-right:4px; }
   input.amt { width:110px; text-align:right; }
   @media (max-width:600px) { td, th { padding:6px 8px; } main { padding:8px; } }
@@ -105,6 +107,7 @@ let selected = new Set();
 async function transactionsPage(account, q) {
   const filter = q.get('filter') || 'all', search = q.get('search') || '';
   const d = await api('GetTransactions', { account, filter, search });
+  const b = await api('GetBudget', {});
   const base = '#/accounts/' + encodeURIComponent(account);
   $app.innerHTML = errHtml() + `
     <p><a href="#/accounts">&larr; Bank accounts</a></p>
@@ -123,13 +126,32 @@ async function transactionsPage(account, q) {
       ${d.transactions.map(t => `<tr>
         <td><input type="checkbox" data-id="${esc(t.id)}" ${selected.has(t.id) ? 'checked' : ''}></td>
         <td>${dmy(t.date)}</td><td>${esc(t.description)}</td>
-        <td>${t.status === 'transfer' ? `<span class="tag">Transfer: ${esc(t.link?.account)}</span>` :
+        <td ${t.status === 'transfer' ? '' : `class="assign" title="Click to assign" data-assign="${esc(t.id)}"`}>${t.status === 'transfer' ? `<span class="tag">Transfer: ${esc(t.link?.account)}</span>` :
               t.assignments.map(a => `<span class="tag">${esc(a.budget_account)} ${t.assignments.length > 1 ? fmt(a.cents) : ''}</span>`).join('') || '<span class="muted">Unassigned</span>'}</td>
         <td class="num ${cls(t.cents)}">${fmt(t.cents)}</td><td class="num">${fmt(t.balance_cents)}</td>
         <td class="num"><button data-split="${esc(t.id)}">Split</button> <button data-transfer="${esc(t.id)}" data-linked="${t.link ? 1 : ''}">${t.link ? 'Unlink' : 'Transfer'}</button></td></tr>`).join('')
         || '<tr><td colspan="7" class="muted">No transactions</td></tr>'}
     </table></div><div id="dialog"></div>`;
-  const b = await api('GetBudget', {});
+  $app.querySelectorAll('td[data-assign]').forEach(td => td.onclick = () => {
+    if (td.querySelector('select')) return;
+    const t = d.transactions.find(x => x.id === td.dataset.assign);
+    if (t.assignments.length > 1) return splitDialog(t);
+    const cur = t.assignments[0]?.budget_account || '';
+    const groups = b.groups.filter(g => g.accounts.length).map(g =>
+      `<optgroup label="${esc(g.name)}">${g.accounts.map(a => `<option ${a.name === cur ? 'selected' : ''}>${esc(a.name)}</option>`).join('')}</optgroup>`).join('');
+    const sel = document.createElement('select');
+    sel.innerHTML = `<option value="">Unassigned</option><option ${cur === 'Income' ? 'selected' : ''}>Income</option>${groups}<option value="__new">+ New budget account…</option>`;
+    td.textContent = '';
+    td.appendChild(sel);
+    sel.focus();
+    try { sel.showPicker(); } catch (e) { /* not supported: the list opens on click */ }
+    sel.onchange = () => {
+      let name = sel.value;
+      if (name === '__new') { name = (prompt('New budget account name') || '').trim(); if (!name) return render(); }
+      act(() => api('AssignTransactions', name ? { transactions: [t.id], budget_account: name } : { transactions: [t.id] }));
+    };
+    sel.onblur = () => render();
+  });
   document.getElementById('budget-accounts').innerHTML =
     [{ name: 'Income' }, ...b.groups.flatMap(g => g.accounts)].map(a => `<option value="${esc(a.name)}">`).join('');
   document.getElementById('search').onchange = e => goto(`${base}?filter=${filter}&search=${encodeURIComponent(e.target.value)}`);
