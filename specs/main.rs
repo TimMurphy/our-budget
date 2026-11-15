@@ -4,6 +4,7 @@
 
 mod bank_accounts;
 mod budgets;
+mod opening_balances;
 
 use cucumber::{gherkin::Step, given, then, when, World};
 use our_budget::app::App;

@@ -17,7 +17,8 @@ pub struct Split {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum Event {
-    BankAccountRegistered { id: String, name: String, bank: String, file: String, opening_cents: i64 },
+    BankAccountRegistered { id: String, name: String, bank: String, file: String },
+    OpeningBalanceSet { account: String, cents: i64 },
     TransactionImported { id: String, account: String, date: String, cents: i64, description: String },
     ImportRowFailed { account: String, file: String, row: usize, reason: String },
     GroupAdded { id: String, name: String },
@@ -164,14 +165,19 @@ impl Default for Model {
 impl Model {
     pub fn apply(&mut self, e: &Event) {
         match e {
-            Event::BankAccountRegistered { id, name, bank, file, opening_cents } => {
+            Event::BankAccountRegistered { id, name, bank, file } => {
                 self.bank_accounts.push(BankAccount {
                     id: id.clone(),
                     name: name.clone(),
                     bank: bank.clone(),
                     file: file.clone(),
-                    opening_cents: *opening_cents,
+                    opening_cents: 0,
                 });
+            }
+            Event::OpeningBalanceSet { account, cents } => {
+                if let Some(a) = self.bank_accounts.iter_mut().find(|a| &a.id == account) {
+                    a.opening_cents = *cents;
+                }
             }
             Event::TransactionImported { id, account, date, cents, description } => {
                 self.txn_index.insert(id.clone(), self.txns.len());

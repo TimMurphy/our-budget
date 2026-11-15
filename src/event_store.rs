@@ -53,6 +53,11 @@ impl EventStore {
         tx.commit().map_err(err)
     }
 
+    pub fn is_empty(&self) -> Result<bool, String> {
+        let n: i64 = self.conn.query_row("SELECT COUNT(*) FROM events", [], |r| r.get(0)).map_err(err)?;
+        Ok(n == 0)
+    }
+
     pub fn load_all(&self) -> Result<Vec<Event>, String> {
         let mut stmt = self.conn.prepare("SELECT data FROM events ORDER BY seq").map_err(err)?;
         let rows = stmt.query_map([], |r| r.get::<_, String>(0)).map_err(err)?;

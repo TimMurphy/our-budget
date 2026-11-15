@@ -14,6 +14,7 @@ Opening balances are as at close of business 30/10/2026 and are kept in [secrets
 - On Windows, if `cargo` cannot find the C++ build tools, run it as `./cargo.ps1 run` (or `./cargo.ps1 test --test specs`). The script finds a Visual Studio C++ toolset that has the headers and libraries, sets up the environment and then runs cargo.
 - `cargo test --test specs` runs every feature file in `specs/`. The steps drive the application through the mediator, against an in-memory event store and a temporary statements folder.
 - Opening balances are read from `specs/secrets.md`, one line per bank account in the form `- <account name>: <amount>`, for example `- NAB - Home Loan: -123456.78`. A missing line means an opening balance of $0.00.
+- On start, if the database has no events at all, each bank account is registered and its opening balance is recorded as an event. The secrets file is not read again once the database has events, so changing it later has no effect. To start over, delete `data/databases/our-budget.db`.
 
 ## Building
 

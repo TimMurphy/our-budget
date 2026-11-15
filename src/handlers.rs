@@ -72,7 +72,11 @@ fn register_bank_account(app: &mut App, v: &Value) -> Res {
     }
     let file = opt_text(v, "file").unwrap_or_else(|| format!("{id}.csv"));
     let opening_cents = v.get("opening_cents").and_then(|x| x.as_i64()).unwrap_or(0);
-    app.record(vec![Event::BankAccountRegistered { id: id.clone(), name, bank, file, opening_cents }])?;
+    let mut events = vec![Event::BankAccountRegistered { id: id.clone(), name, bank, file }];
+    if opening_cents != 0 {
+        events.push(Event::OpeningBalanceSet { account: id.clone(), cents: opening_cents });
+    }
+    app.record(events)?;
     Ok(json!({ "id": id }))
 }
 
