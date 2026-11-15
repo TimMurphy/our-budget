@@ -6,14 +6,14 @@ It is written in Rust. Specs and tests are Gherkin feature files, with their Rus
 
 This file contains all the specifications for the application. It is updated whenever a prompt changes what the application does.
 
-Opening balances are as at close of business 30/10/2026 and are kept in [secrets.md](secrets.md), which is not committed.
+Opening balances are as at close of business 30/10/2026 and are kept in [secrets.md](../data/secrets.md), which is not committed.
 
 ## Running
 
 - `cargo run` starts the application on http://localhost:4000. It serves the web page and a JSON API (`POST /api/<RequestType>`) that forwards to the mediator.
 - On Windows, if `cargo` cannot find the C++ build tools, run it as `./cargo.ps1 run` (or `./cargo.ps1 test --test specs`). The script finds a Visual Studio C++ toolset that has the headers and libraries, sets up the environment and then runs cargo.
 - `cargo test --test specs` runs every feature file in `specs/`. The steps drive the application through the mediator, against an in-memory event store and a temporary statements folder.
-- Opening balances are read from `specs/secrets.md`, one line per bank account in the form `- <account name>: <amount>`, for example `- NAB - Home Loan: -123456.78`. A missing line means an opening balance of $0.00.
+- Opening balances are read from `data/secrets.md`, one line per bank account in the form `- <account name>: <amount>`, for example `- NAB - Home Loan: -123456.78`. A missing line means an opening balance of $0.00.
 - On start, if the database has no events at all, each bank account is registered and its opening balance is recorded as an event. The secrets file is not read again once the database has events, so changing it later has no effect. To start over, delete `data/databases/our-budget.db`.
 
 ## Building
@@ -68,7 +68,8 @@ Rules that apply everywhere:
 - A row that cannot be parsed is skipped. The import records the file name and row number and carries on with the remaining rows. The failures are shown on the bank account screen.
 - A missing statement file is not an error. The account simply has nothing new.
 - Transactions are never edited or deleted by an import.
-- NAB statements have no header row. Columns are: date (`DD Mon YY`), amount (negative for debits), account number, blank, type, details. A header row is used if present.
+- NAB statements have a header row. Columns include: date (`DD Mon YY`), amount (negative for debits), account number, blank, type, transaction details. Without a header row, that column order is assumed.
+- Statements are read from `data/back-accounts/`, one file per bank account, named in the Accounts section below.
 - Westpac statements have a header row. Columns include: bank account, date (`DD/MM/YYYY`), narrative, debit amount, credit amount. A debit is stored as a negative amount.
 
 ### Transaction list
@@ -102,21 +103,21 @@ Rules that apply everywhere:
 
 #### NAB - Home Loan
 
-Opening balance: see [secrets.md](secrets.md)
+Opening balance: see [secrets.md](../data/secrets.md)
 
-data/bank-transactions/home-loan.csv
+data/back-accounts/NAB - Home Loan.csv
 
 #### NAB - Nicole's Account
 
-Opening balance: see [secrets.md](secrets.md)
+Opening balance: see [secrets.md](../data/secrets.md)
 
-data/bank-transactions/nicole.csv
+data/back-accounts/NAB - Nicole's Account.csv
 
-#### Westpac - Our Joint Account
+#### Westpac - Our Account
 
-Opening balance: see [secrets.md](secrets.md)
+Opening balance: see [secrets.md](../data/secrets.md)
 
-data/bank-transactions/joint.csv
+data/back-accounts/Westpac - Our Account.csv
 
 ## Budgets
 

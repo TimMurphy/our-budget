@@ -20,9 +20,9 @@ fn main() {
 fn run() -> Result<(), String> {
     let data = PathBuf::from("data");
     let store = EventStore::open(&data.join("databases").join("our-budget.db"))?;
-    let mut app = App::new(store, data.join("bank-transactions"))?;
+    let mut app = App::new(store, data.join("back-accounts"))?;
     let mediator = Arc::new(Mediator::default());
-    setup::register_accounts(&mut app, &mediator, &PathBuf::from("specs").join("secrets.md"))?;
+    setup::register_accounts(&mut app, &mediator, &data.join("secrets.md"))?;
     let app = Arc::new(Mutex::new(app));
 
     // Import on start, then every hour.

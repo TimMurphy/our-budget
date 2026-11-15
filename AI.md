@@ -6,7 +6,7 @@ Guidance for any AI coding assistant working in this repository.
 
 - **[specs/SPEC.md](specs/SPEC.md) is the single source of all specifications for the application.** Read it before changing anything. Do not put specifications anywhere else.
 - **Every time you act on a prompt that changes what the application does, update `specs/SPEC.md` in the same change.** That includes new or changed behaviour, rules, decisions and answers to open questions. If the spec and a prompt disagree, follow the prompt and update the spec.
-- Keep `specs/SPEC.md` free of real financial data. Opening balances live in `specs/secrets.md`, which is not committed.
+- Keep `specs/SPEC.md` free of real financial data. Opening balances live in `data/secrets.md`, which is not committed.
 
 ## Rules
 

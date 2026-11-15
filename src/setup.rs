@@ -7,9 +7,9 @@ use serde_json::json;
 use std::path::Path;
 
 pub const ACCOUNTS: [(&str, &str, &str); 3] = [
-    ("NAB - Home Loan", "NAB", "home-loan.csv"),
-    ("NAB - Nicole's Account", "NAB", "nicole.csv"),
-    ("Westpac - Our Joint Account", "Westpac", "joint.csv"),
+    ("NAB - Home Loan", "NAB", "NAB - Home Loan.csv"),
+    ("NAB - Nicole's Account", "NAB", "NAB - Nicole's Account.csv"),
+    ("Westpac - Our Account", "Westpac", "Westpac - Our Account.csv"),
 ];
 
 /// Looks up `- <account name>: <amount>` in the secrets file.

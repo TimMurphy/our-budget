@@ -1,4 +1,3 @@
 # local data: sqlite database and downloaded bank statements
 data/
 target/
-specs/secrets.md
