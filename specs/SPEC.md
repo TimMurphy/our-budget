@@ -84,7 +84,7 @@ Rules that apply everywhere:
 - Only transactions dated on or after 1 Nov 2026 are imported. Earlier rows in a statement are ignored. Opening balances are as at close of business 30/10/2026, so earlier activity is already inside them.
 - The import reports how many rows it skipped for being before 1 Nov 2026, and the program prints it each time it imports, so nothing is dropped silently.
 - NAB statements have a header row. Columns include: date (`DD Mon YY`), amount (negative for debits), account number, blank, type, transaction details. Without a header row, that column order is assumed.
-- Statements are read from `data/back-accounts/`, one file per bank account, named in the Accounts section below.
+- Statements are read from `data/bank-accounts/`, one file per bank account, named in the Accounts section below.
 - Westpac statements have a header row. Columns include: bank account, date (`DD/MM/YYYY`), narrative, debit amount, credit amount. A debit is stored as a negative amount.
 
 ### Transaction list
@@ -129,19 +129,19 @@ Rules that apply everywhere:
 
 Opening balance: see [secrets.md](../data/secrets.md)
 
-data/back-accounts/NAB - Home Loan.csv
+data/bank-accounts/NAB - Home Loan.csv
 
 #### NAB - Nicole's Account
 
 Opening balance: see [secrets.md](../data/secrets.md)
 
-data/back-accounts/NAB - Nicole's Account.csv
+data/bank-accounts/NAB - Nicole's Account.csv
 
 #### Westpac - Our Account
 
 Opening balance: see [secrets.md](../data/secrets.md)
 
-data/back-accounts/Westpac - Our Account.csv
+data/bank-accounts/Westpac - Our Account.csv
 
 ## Auto assign
 

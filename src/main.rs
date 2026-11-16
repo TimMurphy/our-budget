@@ -48,7 +48,7 @@ fn main() {
 fn run() -> Result<(), String> {
     let data = data_dir();
     let store = EventStore::open(&data.join("databases").join("our-budget.db"))?;
-    let mut app = App::new(store, data.join("back-accounts"))?;
+    let mut app = App::new(store, data.join("bank-accounts"))?;
     app.import_from = IMPORT_FROM.to_string();
     println!(
         "read model tables: {} ({} events applied)",
