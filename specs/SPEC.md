@@ -58,11 +58,12 @@ Rules that apply everywhere:
 - Filters
     - All transactions
     - Unassigned
+    - Pending approval
     - Assigned
 
 ### Bank account list
 
-- Lists every bank account with its name, bank and current balance.
+- Lists every bank account with its name, bank, how many transactions are unassigned, how many are pending approval, and its current balance.
 - Current balance is the opening balance plus the sum of all imported transactions.
 - Also shows the total of all bank accounts.
 - Selecting a bank account opens its transaction list.
@@ -70,6 +71,7 @@ Rules that apply everywhere:
 
 ### Importing transactions
 
+- Auto assign rules are applied to the transactions an import adds (see Auto assign).
 - The application imports each account's statement file on start and then every hour while it is running. A manual "Import now" action is also available.
 - Each bank has its own CSV format (NAB and Westpac). The importer for each bank parses its own format.
 - A transaction is identified by its bank account, date, amount, description and its position among identical rows in the file. Importing the same file twice adds nothing.
@@ -90,8 +92,10 @@ Rules that apply everywhere:
 - The page has no back link. The bank account heading sits close to the top of the page, and the navigation bar's "Bank accounts" drop-down is the way to move between accounts.
 - The list of transactions scrolls inside its own area. The account heading, the unassigned count, the filters and the column headings stay in view while the rows scroll.
 - Clicking the Date column heading reverses the order, between newest first (the default) and oldest first. An arrow shows the current order. The choice is remembered in the browser and used for every bank account the next time the page is opened. The running balance stays with its transaction.
-- Filters: All transactions, Unassigned, Assigned. A bank account opens on Unassigned. The selected filter is shown in the page address so it survives a refresh.
-- Shows how many transactions are unassigned and their total.
+- Filters: All transactions, Unassigned, Pending approval, Assigned. Pending approval lists the transactions an auto assign rule assigned that have not been approved yet. Assigned includes them. A bank account opens on Unassigned. The selected filter is shown in the page address so it survives a refresh.
+- Shows how many transactions are unassigned and their total, and how many are pending approval.
+- A transaction that is pending approval shows a "Pending approval" tag beside its budget account.
+- Ticking transactions and choosing "Approve selected" approves them. With nothing ticked it shows a message and changes nothing. Approving does not change the assignment, it only clears the pending approval.
 - Searching by description narrows the list within the current filter.
 
 ### Assigning transactions
@@ -134,6 +138,24 @@ data/back-accounts/NAB - Nicole's Account.csv
 Opening balance: see [secrets.md](../data/secrets.md)
 
 data/back-accounts/Westpac - Our Account.csv
+
+## Auto assign
+
+An auto assign rule is a phrase and a budget account. A transaction whose description contains the phrase is assigned to that budget account.
+
+- The "Auto assign" page in the navigation bar lists the rules (phrase and budget account) and lets you add and remove them.
+- To add a rule, type the phrase and choose the budget account from the same drop-down as assigning, including "+ New budget account…". The page then says how many existing transactions the rule assigned.
+- Matching is always case-insensitive and finds the phrase anywhere in the description. There is no case-sensitive option. A phrase can have only one rule whatever its case.
+- Clicking a transaction's description on the bank transactions page opens a "New auto assign rule" dialog. The phrase is filled in with the description, and can be edited so that only the part that matters is kept. The dialog has the same budget account drop-down as assigning, including "+ New budget account…", and starts on the transaction's account if it is assigned to just one. Create rule makes the rule exactly as on the Auto assign page, applies it to the unassigned transactions, and the transactions page then says how many it assigned. Errors, such as a phrase that already has a rule, are shown in the dialog. Cancel changes nothing.
+- When a rule is created, it is applied to every transaction that is unassigned at that moment. Transactions that already have an assignment, in whole or in part, and transactions linked as transfers are left alone.
+- When transactions are imported, the rules are applied to the transactions that import added. They are not applied to older transactions, so one that you unassigned by hand stays unassigned.
+- If more than one rule matches, the rule made first is used.
+- A rule whose budget account has been closed is skipped.
+- A phrase can have only one rule, ignoring case. A rule needs an open budget account.
+- A transaction assigned by a rule is assigned its whole amount and is pending approval. It counts in the budget as soon as it is assigned.
+- Approving clears the pending approval and keeps the assignment. Assigning, splitting or unassigning a transaction by hand also clears it, because you have decided it.
+- Removing a rule does not change any assignment it made. It only stops the rule matching from then on.
+- Approving, assigning, rules and their removal are all events like everything else.
 
 ## Budgets
 

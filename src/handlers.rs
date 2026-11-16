@@ -37,6 +37,10 @@ pub fn all() -> Vec<(&'static str, Handler)> {
         ("MoveBudgetAccount", move_budget_account),
         ("SetBudgeted", set_budgeted),
         ("SetAutoMonthly", set_auto_monthly),
+        ("ListAutoAssignRules", list_auto_assign_rules),
+        ("CreateAutoAssignRule", create_auto_assign_rule),
+        ("RemoveAutoAssignRule", remove_auto_assign_rule),
+        ("ApproveTransactions", approve_transactions),
     ]
 }
 
@@ -91,7 +95,9 @@ fn list_bank_accounts(app: &mut App, _: &Value) -> Res {
         let balance = read::balance(c, &a.id)?;
         total += balance;
         let unassigned = txns.iter().filter(|t| t.account == a.id && !t.is_assigned()).count();
-        accounts.push(json!({ "id": a.id, "name": a.name, "bank": a.bank, "balance_cents": balance, "unassigned": unassigned }));
+        let pending = txns.iter().filter(|t| t.account == a.id && t.pending).count();
+        accounts.push(json!({ "id": a.id, "name": a.name, "bank": a.bank, "balance_cents": balance,
+            "unassigned": unassigned, "pending": pending }));
     }
     Ok(json!({ "accounts": accounts, "total_cents": total }))
 }
@@ -99,12 +105,15 @@ fn list_bank_accounts(app: &mut App, _: &Value) -> Res {
 fn import_statements(app: &mut App, _: &Value) -> Res {
     let mut imported = 0;
     let from = app.import_from.clone();
+    let rules = read::auto_rules(app.store.conn())?;
+    let mut auto_assigned = 0;
     for acct in read::bank_accounts(app.store.conn())? {
         let Ok(content) = std::fs::read_to_string(app.statements_dir.join(&acct.file)) else {
             continue;
         };
         let mut seen: HashMap<String, usize> = HashMap::new();
         let mut events = vec![];
+        let mut new_txns: Vec<(String, String, i64)> = vec![];
         for r in banks::parse(&acct.bank, &content) {
             match r {
                 Ok(row) if row.date.as_str() < from.as_str() => {}
@@ -115,6 +124,7 @@ fn import_statements(app: &mut App, _: &Value) -> Res {
                     let id = format!("{base}|{n}");
                     if !read::txn_exists(app.store.conn(), &id)? {
                         imported += 1;
+                        new_txns.push((id.clone(), row.description.clone(), row.cents));
                         events.push(Event::TransactionImported {
                             id,
                             account: acct.id.clone(),
@@ -131,9 +141,13 @@ fn import_statements(app: &mut App, _: &Value) -> Res {
                 }
             }
         }
+        // Rules apply to the transactions just imported, not to older ones that may have been unassigned by hand.
+        let auto = auto_assign_events(app.store.conn(), &rules, &new_txns)?;
+        auto_assigned += auto.len();
+        events.extend(auto);
         app.record(events)?;
     }
-    Ok(json!({ "imported": imported }))
+    Ok(json!({ "imported": imported, "auto_assigned": auto_assigned }))
 }
 
 fn txn_status(t: &read::Txn) -> &'static str {
@@ -151,7 +165,7 @@ fn get_transactions(app: &mut App, v: &Value) -> Res {
     let id = text(v, "account")?;
     let acct = read::bank_account(c, &id)?.ok_or("no such bank account")?;
     let filter = opt_text(v, "filter").unwrap_or_else(|| "all".into());
-    if !["all", "unassigned", "assigned"].contains(&filter.as_str()) {
+    if !["all", "unassigned", "assigned", "pending"].contains(&filter.as_str()) {
         return Err(format!("unknown filter {filter}"));
     }
     let search = opt_text(v, "search").unwrap_or_default().to_lowercase();
@@ -164,6 +178,7 @@ fn get_transactions(app: &mut App, v: &Value) -> Res {
         running += t.cents;
         rows.push((t, running));
     }
+    let pending_count = rows.iter().filter(|(t, _)| t.pending).count();
     let unassigned: Vec<&(read::Txn, i64)> = rows.iter().filter(|(t, _)| !t.is_assigned()).collect();
     let (unassigned_count, unassigned_cents) = (unassigned.len(), unassigned.iter().map(|(t, _)| t.cents).sum::<i64>());
 
@@ -172,6 +187,7 @@ fn get_transactions(app: &mut App, v: &Value) -> Res {
     for (t, bal) in &rows {
         let shown = match filter.as_str() {
             "assigned" => t.is_assigned(),
+            "pending" => t.pending,
             "unassigned" => !t.is_assigned(),
             _ => true,
         };
@@ -196,7 +212,7 @@ fn get_transactions(app: &mut App, v: &Value) -> Res {
         }
         list.push(json!({
             "id": t.id, "date": t.date, "description": t.description, "cents": t.cents,
-            "balance_cents": bal, "status": txn_status(t), "link": link, "assignments": assignments,
+            "balance_cents": bal, "status": txn_status(t), "pending": t.pending, "link": link, "assignments": assignments,
         }));
     }
     let failures: Vec<Value> = read::failures(c, &acct.id)?
@@ -206,7 +222,7 @@ fn get_transactions(app: &mut App, v: &Value) -> Res {
     Ok(json!({
         "account": { "id": acct.id, "name": acct.name, "bank": acct.bank, "balance_cents": read::balance(c, &acct.id)? },
         "filter": filter, "transactions": list, "failures": failures,
-        "unassigned_count": unassigned_count, "unassigned_cents": unassigned_cents,
+        "unassigned_count": unassigned_count, "unassigned_cents": unassigned_cents, "pending_count": pending_count,
     }))
 }
 
@@ -539,4 +555,112 @@ fn get_budget(app: &mut App, v: &Value) -> Res {
         "over_budgeted_cents": (-report.left_to_budget).max(0),
         "groups": groups,
     }))
+}
+
+// ---------- auto assign ----------
+
+/// The first rule whose phrase is in the description (ignoring case) and whose budget account is open.
+fn matching_rule<'a>(rules: &'a [read::Rule], open: &HashSet<String>, description: &str) -> Option<&'a read::Rule> {
+    let d = description.to_lowercase();
+    rules.iter().find(|r| open.contains(&r.account) && d.contains(&r.phrase.to_lowercase()))
+}
+
+/// Events that assign each of these (id, description, cents) transactions by the first matching rule.
+fn auto_assign_events(c: &Connection, rules: &[read::Rule], txns: &[(String, String, i64)]) -> Result<Vec<Event>, String> {
+    if rules.is_empty() {
+        return Ok(vec![]);
+    }
+    let open: HashSet<String> = read::budget_accounts(c)?.into_iter().filter(|a| !a.closed).map(|a| a.id).collect();
+    Ok(txns
+        .iter()
+        .filter_map(|(id, description, cents)| {
+            matching_rule(rules, &open, description).map(|r| Event::AutoAssigned {
+                transaction: id.clone(),
+                account: r.account.clone(),
+                cents: *cents,
+                rule: r.id.clone(),
+            })
+        })
+        .collect())
+}
+
+fn list_auto_assign_rules(app: &mut App, _: &Value) -> Res {
+    let c = app.store.conn();
+    let mut rules = vec![];
+    for r in read::auto_rules(c)? {
+        let account = read::budget_account_by_id(c, &r.account)?;
+        let group = match &account {
+            Some(a) => read::group(c, &a.group)?.map(|g| g.name),
+            None => None,
+        };
+        rules.push(json!({
+            "id": r.id, "phrase": r.phrase, "budget_account_id": r.account,
+            "budget_account": account.as_ref().map(|a| a.name.clone()).unwrap_or_else(|| r.account.clone()),
+            "group": group, "closed": account.map(|a| a.closed).unwrap_or(false),
+        }));
+    }
+    Ok(json!({ "rules": rules }))
+}
+
+fn create_auto_assign_rule(app: &mut App, v: &Value) -> Res {
+    let c = app.store.conn();
+    let phrase = text(v, "phrase")?;
+    let account = read::budget_account(c, &text(v, "budget_account")?)?.ok_or("no such budget account")?;
+    if account.closed {
+        return Err(format!("budget account {} is closed", account.name));
+    }
+    let rules = read::auto_rules(c)?;
+    if rules.iter().any(|r| r.phrase.to_lowercase() == phrase.to_lowercase()) {
+        return Err("a rule for that phrase already exists".into());
+    }
+    let mut n = rules.len() + 1;
+    while read::rule_id_used(c, &format!("rule-{n}"))? {
+        n += 1;
+    }
+    let rule = read::Rule { id: format!("rule-{n}"), phrase: phrase.clone(), account: account.id.clone() };
+
+    // The new rule applies to every transaction that is unassigned now. Older rules already had
+    // their turn on those, so only this rule is tried.
+    let unassigned: Vec<(String, String, i64)> = read::all_txns(c)?
+        .into_iter()
+        .filter(|t| t.splits.is_empty() && t.link.is_none())
+        .map(|t| (t.id, t.description, t.cents))
+        .collect();
+    let mut events = vec![Event::AutoAssignRuleCreated { id: rule.id.clone(), phrase, account: account.id }];
+    let mine = auto_assign_events(c, std::slice::from_ref(&rule), &unassigned)?;
+    let assigned = mine.len();
+    events.extend(mine);
+    app.record(events)?;
+    Ok(json!({ "id": rule.id, "assigned": assigned }))
+}
+
+fn remove_auto_assign_rule(app: &mut App, v: &Value) -> Res {
+    let id = text(v, "id")?;
+    if !read::auto_rules(app.store.conn())?.iter().any(|r| r.id == id) {
+        return Err("no such rule".into());
+    }
+    app.record(vec![Event::AutoAssignRuleRemoved { id }])?;
+    ok()
+}
+
+fn approve_transactions(app: &mut App, v: &Value) -> Res {
+    let ids: Vec<String> = v
+        .get("transactions")
+        .and_then(|x| x.as_array())
+        .map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect())
+        .unwrap_or_default();
+    if ids.is_empty() {
+        return Err("transactions is required".into());
+    }
+    let c = app.store.conn();
+    let mut events = vec![];
+    for id in ids {
+        let t = read::txn(c, &id)?.ok_or("no such transaction")?;
+        if t.pending {
+            events.push(Event::TransactionApproved { transaction: id });
+        }
+    }
+    let approved = events.len();
+    app.record(events)?;
+    Ok(json!({ "approved": approved }))
 }

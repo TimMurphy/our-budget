@@ -29,6 +29,8 @@ pub struct Txn {
     pub description: String,
     pub splits: Vec<Split>,
     pub link: Option<String>,
+    /// Assigned by an auto assign rule and not yet approved.
+    pub pending: bool,
 }
 
 impl Txn {
@@ -61,6 +63,13 @@ pub struct BudgetAccount {
     pub group: String,
     pub closed: bool,
     pub auto: Option<(String, i64)>,
+}
+
+#[derive(Clone, Debug)]
+pub struct Rule {
+    pub id: String,
+    pub phrase: String,
+    pub account: String,
 }
 
 pub struct AccountRow {
@@ -115,7 +124,7 @@ pub fn balance(c: &Connection, account: &str) -> R<i64> {
 fn load_txns(c: &Connection, account: Option<&str>, id: Option<&str>) -> R<Vec<Txn>> {
     let mut s = c
         .prepare(
-            "SELECT id, account, date, cents, description, link FROM transactions
+            "SELECT id, account, date, cents, description, link, pending FROM transactions
              WHERE (?1 IS NULL OR account = ?1) AND (?2 IS NULL OR id = ?2) ORDER BY rowid",
         )
         .map_err(err)?;
@@ -129,6 +138,7 @@ fn load_txns(c: &Connection, account: Option<&str>, id: Option<&str>) -> R<Vec<T
                 description: r.get(4)?,
                 splits: vec![],
                 link: r.get(5)?,
+                pending: r.get::<_, i64>(6)? != 0,
             })
         })
         .map_err(err)?;
@@ -255,6 +265,25 @@ pub fn budget_account_by_id(c: &Connection, id: &str) -> R<Option<BudgetAccount>
 
 pub fn account_name(c: &Connection, id: &str) -> R<String> {
     Ok(budget_account_by_id(c, id)?.map(|a| a.name).unwrap_or_else(|| id.to_string()))
+}
+
+// ---------- auto assign rules ----------
+
+/// In the order they were made. The first rule that matches a transaction wins.
+/// True if a rule with this id has ever been made, even if it was removed since.
+pub fn rule_id_used(c: &Connection, id: &str) -> R<bool> {
+    c.query_row(
+        "SELECT EXISTS (SELECT 1 FROM events WHERE type = 'AutoAssignRuleCreated' AND json_extract(data, '$.id') = ?1)",
+        params![id],
+        |r| r.get(0),
+    )
+    .map_err(err)
+}
+
+pub fn auto_rules(c: &Connection) -> R<Vec<Rule>> {
+    let mut s = c.prepare("SELECT id, phrase, account FROM auto_assign_rules ORDER BY rowid").map_err(err)?;
+    let rows = s.query_map([], |r| Ok(Rule { id: r.get(0)?, phrase: r.get(1)?, account: r.get(2)? })).map_err(err)?;
+    rows.collect::<Result<_, _>>().map_err(err)
 }
 
 // ---------- the budget ----------

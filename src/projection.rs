@@ -5,17 +5,25 @@ use rusqlite::{params, Connection};
 
 /// Bump when the tables or what the projection writes to them changes. A different version
 /// rebuilds the tables once from the events.
-pub const PROJECTION_VERSION: u32 = 1;
+pub const PROJECTION_VERSION: u32 = 2;
 
-const TABLES: [&str; 7] =
-    ["bank_accounts", "transactions", "assignments", "import_failures", "groups", "budget_accounts", "budgets"];
+const TABLES: [&str; 8] = [
+    "bank_accounts",
+    "transactions",
+    "assignments",
+    "import_failures",
+    "groups",
+    "budget_accounts",
+    "budgets",
+    "auto_assign_rules",
+];
 
 const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS bank_accounts (
     id TEXT PRIMARY KEY, name TEXT NOT NULL, bank TEXT NOT NULL, file TEXT NOT NULL, opening_cents INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS transactions (
     id TEXT PRIMARY KEY, account TEXT NOT NULL, date TEXT NOT NULL, cents INTEGER NOT NULL,
-    description TEXT NOT NULL, link TEXT);
+    description TEXT NOT NULL, link TEXT, pending INTEGER NOT NULL DEFAULT 0);
 CREATE INDEX IF NOT EXISTS transactions_account ON transactions (account, date);
 CREATE TABLE IF NOT EXISTS assignments (
     transaction_id TEXT NOT NULL, budget_account TEXT NOT NULL, cents INTEGER NOT NULL);
@@ -29,6 +37,8 @@ CREATE TABLE IF NOT EXISTS budget_accounts (
     auto_period TEXT, auto_cents INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS budgets (
     account TEXT NOT NULL, month TEXT NOT NULL, cents INTEGER NOT NULL, PRIMARY KEY (account, month));
+CREATE TABLE IF NOT EXISTS auto_assign_rules (
+    id TEXT PRIMARY KEY, phrase TEXT NOT NULL, account TEXT NOT NULL);
 ";
 
 fn err(e: impl std::fmt::Display) -> String {
@@ -101,6 +111,7 @@ pub fn apply(c: &Connection, e: &Event) -> Result<(), String> {
         }
         Event::Assigned { transaction, splits } => {
             c.execute("DELETE FROM assignments WHERE transaction_id = ?1", params![transaction]).map_err(err)?;
+            c.execute("UPDATE transactions SET pending = 0 WHERE id = ?1", params![transaction]).map_err(err)?;
             for s in splits {
                 c.execute(
                     "INSERT INTO assignments (transaction_id, budget_account, cents) VALUES (?1, ?2, ?3)",
@@ -122,6 +133,23 @@ pub fn apply(c: &Connection, e: &Event) -> Result<(), String> {
              ON CONFLICT(account, month) DO UPDATE SET cents = ?3",
             params![account, month, cents],
         ),
+        Event::AutoAssignRuleCreated { id, phrase, account } => c.execute(
+            "INSERT INTO auto_assign_rules (id, phrase, account) VALUES (?1, ?2, ?3)",
+            params![id, phrase, account],
+        ),
+        Event::AutoAssignRuleRemoved { id } => c.execute("DELETE FROM auto_assign_rules WHERE id = ?1", params![id]),
+        Event::AutoAssigned { transaction, account, cents, .. } => {
+            c.execute("DELETE FROM assignments WHERE transaction_id = ?1", params![transaction]).map_err(err)?;
+            c.execute(
+                "INSERT INTO assignments (transaction_id, budget_account, cents) VALUES (?1, ?2, ?3)",
+                params![transaction, account, cents],
+            )
+            .map_err(err)?;
+            c.execute("UPDATE transactions SET pending = 1 WHERE id = ?1", params![transaction])
+        }
+        Event::TransactionApproved { transaction } => {
+            c.execute("UPDATE transactions SET pending = 0 WHERE id = ?1", params![transaction])
+        }
         Event::AutoMonthlySet { account, period, cents } => c.execute(
             "UPDATE budget_accounts SET auto_period = ?2, auto_cents = ?3 WHERE id = ?1",
             params![account, period, cents],

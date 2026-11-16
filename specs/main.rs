@@ -2,6 +2,7 @@
 //! Steps drive the application through its mediator, against an in-memory event
 //! store and a temporary statements folder.
 
+mod auto_assign;
 mod bank_accounts;
 mod budgets;
 mod opening_balances;
@@ -95,6 +96,7 @@ fn write_statement(w: &mut BudgetWorld, account: &str, text: String) {
 }
 
 #[given(expr = "the {string} statement contains:")]
+#[when(expr = "the {string} statement contains:")]
 fn statement(w: &mut BudgetWorld, step: &Step, account: String) {
     let bank = our_budget::read::bank_account(w.app.store.conn(), &account).unwrap().expect("bank account").bank;
     let lines: Vec<String> = table(step).iter().map(|r| statement_line(&bank, &r[0], &r[1], &r[2])).collect();

@@ -32,6 +32,11 @@ pub enum Event {
     TransferUnlinked { a: String, b: String },
     BudgetSet { account: String, month: String, cents: i64 },
     AutoMonthlySet { account: String, period: Option<String>, cents: i64 },
+    AutoAssignRuleCreated { id: String, phrase: String, account: String },
+    AutoAssignRuleRemoved { id: String },
+    /// The whole transaction assigned to `account` by a rule. It stays pending approval until approved.
+    AutoAssigned { transaction: String, account: String, cents: i64, rule: String },
+    TransactionApproved { transaction: String },
 }
 
 impl Event {

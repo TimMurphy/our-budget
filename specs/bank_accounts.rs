@@ -4,7 +4,7 @@ use crate::{cents, table, BudgetWorld};
 use cucumber::{gherkin::Step, given, then, when};
 use serde_json::{json, Value};
 
-fn txn_id(w: &BudgetWorld, account: &str, description: &str) -> String {
+pub fn txn_id(w: &BudgetWorld, account: &str, description: &str) -> String {
     let c = w.app.store.conn();
     let acct = our_budget::read::bank_account(c, account).unwrap().expect("bank account").id;
     our_budget::read::txns_for_account(c, &acct)
@@ -74,6 +74,7 @@ fn assign(w: &mut BudgetWorld, description: String, account: String, budget_acco
     w.send("AssignTransactions", json!({ "transactions": [id], "budget_account": budget_account }));
 }
 
+#[given(expr = "I unassign {string} in {string}")]
 #[when(expr = "I unassign {string} in {string}")]
 fn unassign(w: &mut BudgetWorld, description: String, account: String) {
     let id = txn_id(w, &account, &description);
