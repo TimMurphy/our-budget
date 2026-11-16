@@ -82,6 +82,8 @@ const cls = c => c < 0 ? 'neg' : '';
 const toCents = s => { const n = Number(String(s).replace(/[$,\s]/g, '')); return Number.isFinite(n) ? Math.round(n * 100) : null; };
 const dollars = c => (c / 100).toFixed(2);
 
+// The household's own current month, not UTC's.
+const localMonth = () => { const n = new Date(); return n.getFullYear() + '-' + String(n.getMonth() + 1).padStart(2, '0'); };
 async function api(name, body = {}) {
   const r = await fetch('/api/' + name, { method: 'POST', body: JSON.stringify(body) });
   const j = await r.json();
@@ -144,7 +146,7 @@ async function accountsPage() {
       <tr><th colspan="4">Total</th><th class="num ${cls(d.total_cents)}">${fmt(d.total_cents)}</th></tr>
     </table></div>`;
   document.getElementById('import').onclick = async () => {
-    try { const r = await api('ImportStatements'); await accountsPage(); document.getElementById('imported').textContent = r.imported + ' new transactions'; }
+    try { const r = await api('ImportStatements'); await accountsPage(); document.getElementById('imported').textContent = r.imported + ' new transactions' + (r.errors.length ? ' — could not read: ' + r.errors.join('; ') : ''); }
     catch (e) { error = e.message; render(); }
   };
 }
@@ -162,7 +164,7 @@ let selected = new Set();
 async function transactionsPage(account, q) {
   const filter = q.get('filter') || 'unassigned', search = q.get('search') || '';
   const d = await api('GetTransactions', { account, filter, search });
-  const b = await api('GetBudget', {});
+  const b = await api('GetBudget', { month: localMonth() });
   b.groups = alphabetical(b.groups); // every budget account list below is in this order
   const order = dateOrder();
   const txns = order === 'asc' ? [...d.transactions].reverse() : d.transactions;
@@ -433,7 +435,7 @@ let notice = ''; // shown once, on the transactions page, after a rule is made t
 let ruleAccount = ''; // the budget account chosen for the rule being made, kept across a redraw
 
 async function autoAssignPage() {
-  const [r, b] = await Promise.all([api('ListAutoAssignRules'), api('GetBudget', {})]);
+  const [r, b] = await Promise.all([api('ListAutoAssignRules'), api('GetBudget', { month: localMonth() })]);
   const groups = alphabetical(b.groups);
   const nameCount = {};
   groups.forEach(g => g.accounts.forEach(a => { const k = a.name.toLowerCase(); nameCount[k] = (nameCount[k] || 0) + 1; }));
@@ -480,7 +482,7 @@ const shiftMonth = (m, by) => { const [y, mo] = m.split('-').map(Number); const 
 const PERIODS = ['Yearly', 'Quarterly', 'Monthly', 'Fortnight', 'Weekly'];
 
 async function budgetPage(q) {
-  const d = await api('GetBudget', { month: q.get('month') || undefined });
+  const d = await api('GetBudget', { month: /^\d{4}-(0[1-9]|1[0-2])$/.test(q.get('month') || '') ? q.get('month') : localMonth() });
   d.groups = alphabetical(d.groups);
   const link = m => `#/budget?month=${m}`;
   $app.innerHTML = errHtml() + `
@@ -509,7 +511,7 @@ async function budgetPage(q) {
   $app.querySelectorAll('[data-rename]').forEach(b => b.onclick = () => { const n = prompt('New group name'); if (n) act(() => api('RenameGroup', { id: b.dataset.rename, name: n })); });
   $app.querySelectorAll('[data-remove]').forEach(b => b.onclick = () => act(() => api('RemoveGroup', { id: b.dataset.remove })));
   $app.querySelectorAll('[data-rename-account]').forEach(b => b.onclick = () => { const n = prompt('New name'); if (n) act(() => api('RenameBudgetAccount', { id: b.dataset.renameAccount, name: n })); });
-  $app.querySelectorAll('[data-close]').forEach(b => b.onclick = () => act(() => api('CloseBudgetAccount', { id: b.dataset.close })));
+  $app.querySelectorAll('[data-close]').forEach(b => b.onclick = () => act(() => api('CloseBudgetAccount', { id: b.dataset.close, month: localMonth() })));
   $app.querySelectorAll('[data-budget]').forEach(i => i.onchange = () => act(() => {
     const c = toCents(i.value); if (c === null) throw new Error('Enter an amount');
     return api('SetBudgeted', { account: i.dataset.budget, month: d.month, cents: c }); }));

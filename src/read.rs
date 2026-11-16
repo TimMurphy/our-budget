@@ -216,6 +216,12 @@ pub fn group(c: &Connection, key: &str) -> R<Option<Group>> {
     .map_err(err)
 }
 
+pub fn group_by_id(c: &Connection, id: &str) -> R<Option<Group>> {
+    c.query_row("SELECT id, name FROM groups WHERE id = ?1", params![id], |r| Ok(Group { id: r.get(0)?, name: r.get(1)? }))
+        .optional()
+        .map_err(err)
+}
+
 const BUDGET_COLS: &str = "SELECT id, name, group_id, closed, auto_period, auto_cents FROM budget_accounts";
 
 fn budget_row(r: &Row) -> rusqlite::Result<BudgetAccount> {
@@ -346,7 +352,7 @@ pub fn month_report(c: &Connection, month: &str) -> R<MonthReport> {
             start = m.clone();
         }
     }
-    let accounts: Vec<BudgetAccount> = budget_accounts(c)?.into_iter().filter(|a| a.id != INCOME).collect();
+    let accounts: Vec<BudgetAccount> = budget_accounts(c)?.into_iter().filter(|a| a.id != INCOME && !a.closed).collect();
     let mut prev_avail: HashMap<String, i64> = HashMap::new();
     let mut m = start;
     loop {

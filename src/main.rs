@@ -65,11 +65,19 @@ fn run() -> Result<(), String> {
         std::thread::spawn(move || loop {
             if let Ok(mut a) = app.lock() {
                 match mediator.send(&mut a, "ImportStatements", &json!({})) {
-                    Ok(r) => println!(
-                        "import: {} new transactions, {} assigned by rules, {} rows before {IMPORT_FROM} skipped",
-                        r["imported"], r["auto_assigned"], r["skipped_before_import_from"]
-                    ),
-                    Err(e) => eprintln!("import failed: {e}"),
+                    Ok(r) => {
+                        println!(
+                            "import: {} new transactions, {} assigned by rules, {} rows before {IMPORT_FROM} skipped",
+                            r["imported"], r["auto_assigned"], r["skipped_before_import_from"]
+                        );
+                        if r["errors"].as_array().is_some_and(|e| !e.is_empty()) {
+                            let _ = std::fs::write(data_dir().join("error.txt"), r["errors"].to_string());
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("import failed: {e}");
+                        let _ = std::fs::write(data_dir().join("error.txt"), &e);
+                    }
                 }
             }
             std::thread::sleep(Duration::from_secs(3600));

@@ -139,3 +139,8 @@ fn shows_in_group(w: &mut BudgetWorld, month: String, name: String, group: Strin
     assert_eq!(a["spent_cents"].as_i64().unwrap(), cents(&spent), "spent");
     assert_eq!(a["available_cents"].as_i64().unwrap(), cents(&available), "available");
 }
+
+#[when(expr = "I view the budget for {string}")]
+fn view_budget(w: &mut BudgetWorld, month: String) {
+    w.send("GetBudget", json!({ "month": month }));
+}

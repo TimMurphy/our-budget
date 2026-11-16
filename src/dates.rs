@@ -33,7 +33,10 @@ pub fn today() -> String {
 
 pub fn parse_iso(s: &str) -> Option<(i64, i64, i64)> {
     let p: Vec<&str> = s.split('-').collect();
-    if p.len() != 3 || p[0].len() != 4 {
+    if p.len() != 3 || p[0].len() != 4 || p[1].len() != 2 || p[2].len() != 2 {
+        return None;
+    }
+    if !p.iter().all(|x| x.bytes().all(|b| b.is_ascii_digit())) {
         return None;
     }
     let (y, m, d) = (p[0].parse().ok()?, p[1].parse().ok()?, p[2].parse().ok()?);
@@ -41,7 +44,16 @@ pub fn parse_iso(s: &str) -> Option<(i64, i64, i64)> {
 }
 
 fn valid(y: i64, m: i64, d: i64) -> bool {
-    (1..=12).contains(&m) && (1..=31).contains(&d) && y > 1900
+    if !(1..=12).contains(&m) || d < 1 || !(1901..=2999).contains(&y) {
+        return false;
+    }
+    let days = match m {
+        2 if y % 4 == 0 && (y % 100 != 0 || y % 400 == 0) => 29,
+        2 => 28,
+        4 | 6 | 9 | 11 => 30,
+        _ => 31,
+    };
+    d <= days
 }
 
 pub fn day_number(date: &str) -> Option<i64> {
@@ -52,8 +64,9 @@ pub fn month_of(date: &str) -> String {
     date.chars().take(7).collect()
 }
 
+/// A canonical `YYYY-MM` (seven characters), so month strings compare and step reliably.
 pub fn is_month(s: &str) -> bool {
-    parse_iso(&format!("{s}-01")).is_some()
+    s.len() == 7 && parse_iso(&format!("{s}-01")).is_some()
 }
 
 pub fn next_month(m: &str) -> String {

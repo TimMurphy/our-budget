@@ -81,6 +81,7 @@ Rules that apply everywhere:
 - A row that cannot be parsed is skipped. The import records the file name and row number and carries on with the remaining rows. The failures are shown on the bank account screen.
 - A missing statement file is not an error. The account simply has nothing new.
 - Transactions are never edited or deleted by an import.
+- A statement file is read tolerantly: a byte order mark is ignored and text that is not valid UTF-8 is read as best it can be. A file that exists but cannot be read is reported (in the import result and in `data/error.txt`), never skipped silently.
 - Only transactions dated on or after 1 Nov 2026 are imported. Earlier rows in a statement are ignored. Opening balances are as at close of business 30/10/2026, so earlier activity is already inside them.
 - The import reports how many rows it skipped for being before 1 Nov 2026, and the program prints it each time it imports, so nothing is dropped silently.
 - NAB statements have a header row. Columns include: date (`DD Mon YY`), amount (negative for debits), account number, blank, type, transaction details. Without a header row, that column order is assumed.
@@ -202,7 +203,9 @@ An auto assign rule is a phrase and a budget account. A transaction whose descri
 - Every budget account has its own id, so same-named accounts stay separate. The screens choose accounts by id. Where a name is shown and the same name is used in more than one group, the group is shown with it, for example "Insurance (Bills)".
 - Anything that identifies a budget account by name (for example assigning by name through the API) must use a name that only one open account has. A name used in more than one group is refused with "more than one budget account is named …", and the id or the group must be used instead.
 - A budget account can be renamed. Its history is kept.
-- A budget account can be closed once its Available is zero. A closed account no longer appears on the budget screen or in the assign list, and its past assignments remain.
+- A budget account can be closed once its Available is zero. A closed account no longer appears on the budget screen or in the assign list, and its past assignments remain. A closed account is left out of the month totals, including Left to budget.
+- Months are written `YYYY-MM` and dates `YYYY-MM-DD`, always with leading zeros; anything else is refused. Dates must exist on the calendar. The page works out the current month from the computer's local clock and sends it, so the month changes at local midnight.
+- A group's id comes from its name. If another group already has that id, a number is added. A group name with no letters or digits is refused.
 - New budget accounts start in the group "Ungrouped".
 - Closing is checked against the Available amount for the current month.
 

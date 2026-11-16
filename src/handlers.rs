@@ -119,9 +119,19 @@ fn import_statements(app: &mut App, _: &Value) -> Res {
     let rules = read::auto_rules(app.store.conn())?;
     let mut auto_assigned = 0;
     let mut skipped = 0;
+    let mut errors: Vec<String> = vec![];
     for acct in read::bank_accounts(app.store.conn())? {
-        let Ok(content) = std::fs::read_to_string(app.statements_dir.join(&acct.file)) else {
-            continue;
+        let content = match std::fs::read(app.statements_dir.join(&acct.file)) {
+            Ok(bytes) => {
+                // Tolerate a byte order mark and non-UTF-8 text rather than skipping the file.
+                let bytes = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF][..]).unwrap_or(&bytes);
+                String::from_utf8_lossy(bytes).into_owned()
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(e) => {
+                errors.push(format!("{}: {e}", acct.file));
+                continue;
+            }
         };
         let mut seen: HashMap<String, usize> = HashMap::new();
         let mut events = vec![];
@@ -159,7 +169,7 @@ fn import_statements(app: &mut App, _: &Value) -> Res {
         events.extend(auto);
         app.record(events)?;
     }
-    Ok(json!({ "imported": imported, "auto_assigned": auto_assigned, "skipped_before_import_from": skipped }))
+    Ok(json!({ "imported": imported, "auto_assigned": auto_assigned, "skipped_before_import_from": skipped, "errors": errors }))
 }
 
 fn txn_status(t: &read::Txn) -> &'static str {
@@ -386,7 +396,16 @@ fn add_group(app: &mut App, v: &Value) -> Res {
     if read::group(app.store.conn(), &name)?.is_some() {
         return Err("a group with that name already exists".into());
     }
-    let id = slug(&name);
+    let base = slug(&name);
+    if base.is_empty() {
+        return Err("invalid group name".into());
+    }
+    let mut id = base.clone();
+    let mut n = 1;
+    while read::group_by_id(app.store.conn(), &id)?.is_some() {
+        n += 1;
+        id = format!("{base}-{n}");
+    }
     app.record(vec![Event::GroupAdded { id: id.clone(), name }])?;
     Ok(json!({ "id": id }))
 }
@@ -491,7 +510,8 @@ fn rename_budget_account(app: &mut App, v: &Value) -> Res {
 fn close_budget_account(app: &mut App, v: &Value) -> Res {
     let c = app.store.conn();
     let id = editable(c, &text(v, "id")?)?;
-    let report = read::month_report(c, &month_of(&app.today()))?;
+    let month = opt_text(v, "month").filter(|m| is_month(m)).unwrap_or_else(|| month_of(&app.today()));
+    let report = read::month_report(c, &month)?;
     if report.rows.get(&id).is_some_and(|r| r.available != 0) {
         return Err("a budget account can be closed only when its available amount is zero".into());
     }

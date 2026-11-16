@@ -177,3 +177,29 @@ Feature: Budgets
     Then the request fails with "already exists in that group"
     When I move the budget account "Insurance" in group "Ungrouped" to group "Bills"
     Then the request fails with "already exists in that group"
+
+  Scenario: A closed budget account no longer counts towards the budget
+    Given the "Joint" statement contains:
+      | date       | amount  | description |
+      | 2026-11-10 | 2500.00 | November pay |
+    And the statements have been imported
+    And I assign "November pay" in "Joint" to "Income"
+    And I create budget account "Gifts"
+    And I budget "$50.00" for "Gifts" in "2026-12"
+    When I close budget account "Gifts"
+    Then in "2026-12" left to budget is "$2,500.00"
+
+  Scenario: Months must be written YYYY-MM
+    When I view the budget for "2026-1"
+    Then the request fails with "YYYY-MM"
+    When I view the budget for "2026-13"
+    Then the request fails with "YYYY-MM"
+
+  Scenario: Group names that make the same id are both accepted
+    Given I add group "R&D"
+    When I add group "R D"
+    Then group "R D" has budget accounts ""
+
+  Scenario: A group name with no letters or digits is refused
+    When I add group "???"
+    Then the request fails with "invalid"
