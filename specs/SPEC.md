@@ -102,7 +102,7 @@ Rules that apply everywhere:
 - An assignment can be changed or removed at any time. Both changes are new events. The earlier assignment stays in the history.
 - A new budget account can be created while assigning, by typing a name that does not exist yet. It joins the group "Ungrouped".
 - An assignment counts in the month of its transaction's date. It cannot be moved to a different month.
-- The same assignment can be applied to several selected transactions at once.
+- The same assignment can be applied to several selected transactions at once. Ticking transactions and choosing "Assign selected" opens a dialog with a drop-down of budget accounts (Income, then the accounts grouped by group) and "+ New budget account…", which opens the same new-budget-account dialog as the "Assigned to" cell. The transactions stay ticked until the assignment is made, and nothing is changed if the dialog is cancelled. "Assign selected" and "Unassign selected" with nothing ticked show a message and change nothing. A count of ticked transactions is shown beside the buttons.
 
 ### Transfers between bank accounts
 

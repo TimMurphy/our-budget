@@ -117,7 +117,7 @@ async function render() {
     else await accountsPage();
   } catch (e) { $app.innerHTML = `<p class="error">${esc(e.message)}</p>`; }
 }
-window.addEventListener('hashchange', () => { error = ''; render(); });
+window.addEventListener('hashchange', () => { error = ''; selected.clear(); render(); });
 
 // ---------- bank accounts ----------
 async function accountsPage() {
@@ -157,8 +157,9 @@ async function transactionsPage(account, q) {
       ${['all', 'unassigned', 'assigned'].map(f => `<a href="${base}?filter=${f}&search=${encodeURIComponent(search)}"><button class="${f === filter ? 'primary' : ''}">${f[0].toUpperCase() + f.slice(1)}</button></a>`).join('')}
       <input id="search" placeholder="Search description" value="${esc(search)}">
     </div>
-    <div class="row" id="bulk"><input id="bulk-account" list="budget-accounts" placeholder="Budget account">
+    <div class="row" id="bulk">
       <button id="bulk-assign">Assign selected</button><button id="bulk-clear">Unassign selected</button>
+      <span class="muted" id="bulk-count"></span>
       <datalist id="budget-accounts"></datalist></div>
     <div class="card scroll"><table>
       <tr><th></th><th id="sort-date" class="sortable" title="Click to reverse the order">Date ${order === 'asc' ? '&#9650;' : '&#9660;'}</th><th>Description</th><th>Assigned to</th><th class="num">Amount</th><th class="num">Balance</th><th></th></tr>
@@ -190,7 +191,7 @@ async function transactionsPage(account, q) {
     try { sel.showPicker(); } catch (e) { /* not supported: the list opens on click */ }
     sel.onchange = () => {
       const name = sel.value;
-      if (name === '__new') { sel.onblur = null; return newAccountDialog(b.groups, t.id); }
+      if (name === '__new') { sel.onblur = null; return newAccountDialog(b.groups, [t.id]); }
       act(() => api('AssignTransactions', name ? { transactions: [t.id], budget_account: name } : { transactions: [t.id] }));
     };
     sel.onblur = () => render();
@@ -199,9 +200,18 @@ async function transactionsPage(account, q) {
     [{ name: 'Income' }, ...b.groups.flatMap(g => g.accounts)].map(a => `<option value="${esc(a.name)}">`).join('');
   document.getElementById('search').onchange = e => goto(`${base}?filter=${filter}&search=${encodeURIComponent(e.target.value)}`);
   $app.querySelectorAll('input[type=checkbox]').forEach(c => c.onchange = () => c.checked ? selected.add(c.dataset.id) : selected.delete(c.dataset.id));
-  document.getElementById('bulk-assign').onclick = () => act(async () => {
-    await api('AssignTransactions', { transactions: [...selected], budget_account: document.getElementById('bulk-account').value }); selected.clear(); });
-  document.getElementById('bulk-clear').onclick = () => act(async () => { await api('AssignTransactions', { transactions: [...selected] }); selected.clear(); });
+  const countEl = document.getElementById('bulk-count');
+  const showCount = () => { countEl.textContent = selected.size ? `${selected.size} selected` : 'Tick transactions to assign them together'; };
+  showCount();
+  $app.querySelectorAll('input[type=checkbox]').forEach(c => c.addEventListener('change', showCount));
+  document.getElementById('bulk-assign').onclick = () => {
+    if (!selected.size) { error = 'Tick the transactions to assign first'; return render(); }
+    assignDialog(b.groups, [...selected]);
+  };
+  document.getElementById('bulk-clear').onclick = () => {
+    if (!selected.size) { error = 'Tick the transactions to unassign first'; return render(); }
+    act(async () => { await api('AssignTransactions', { transactions: [...selected] }); selected.clear(); });
+  };
   $app.querySelectorAll('[data-split]').forEach(btn => btn.onclick = () => splitDialog(d.transactions.find(t => t.id === btn.dataset.split)));
   $app.querySelectorAll('[data-transfer]').forEach(btn => btn.onclick = () => btn.dataset.linked
     ? act(() => api('UnlinkTransfer', { transaction: btn.dataset.transfer }))
@@ -209,7 +219,35 @@ async function transactionsPage(account, q) {
 }
 
 // Creates a budget account (optionally in a new group) and assigns the transaction to it.
-function newAccountDialog(groups, transactionId) {
+// Asks which budget account to assign the ticked transactions to. The selection stays ticked
+// until the assignment is made.
+function assignDialog(groups, ids) {
+  const dlg = document.createElement('dialog');
+  const options = groups.filter(g => g.accounts.length).map(g =>
+    `<optgroup label="${esc(g.name)}">${g.accounts.map(a => `<option>${esc(a.name)}</option>`).join('')}</optgroup>`).join('');
+  dlg.innerHTML = `<div class="dlg"><h2>Assign ${ids.length} transaction${ids.length === 1 ? '' : 's'}</h2>
+    <label>Budget account<select id="as-account"><option>Income</option>${options}<option value="__new">+ New budget account…</option></select></label>
+    <p class="error" id="as-error"></p>
+    <div class="row"><button class="primary" id="as-assign">Assign</button><button id="as-cancel">Cancel</button></div></div>`;
+  document.body.appendChild(dlg);
+  const $ = id => dlg.querySelector('#' + id);
+  let next = null;
+  $('as-cancel').onclick = () => dlg.close();
+  dlg.addEventListener('close', () => { dlg.remove(); if (next) next(); else render(); });
+  $('as-assign').onclick = async () => {
+    const name = $('as-account').value;
+    if (name === '__new') { next = () => newAccountDialog(groups, ids, () => selected.clear()); return dlg.close(); }
+    try {
+      await api('AssignTransactions', { transactions: ids, budget_account: name });
+      selected.clear();
+      dlg.close();
+    } catch (e) { $('as-error').textContent = e.message; }
+  };
+  dlg.showModal();
+  $('as-account').focus();
+}
+
+function newAccountDialog(groups, transactionIds, onDone) {
   const dlg = document.createElement('dialog');
   dlg.innerHTML = `<div class="dlg"><h2>New budget account</h2>
     <label>Group<select id="na-group">${groups.map(g => `<option value="${esc(g.id)}">${esc(g.name)}</option>`).join('')}
@@ -238,7 +276,8 @@ function newAccountDialog(groups, transactionId) {
         group = (await api('AddGroup', { name: groupName })).id;
       }
       await api('CreateBudgetAccount', { name, group });
-      await api('AssignTransactions', { transactions: [transactionId], budget_account: name });
+      await api('AssignTransactions', { transactions: transactionIds, budget_account: name });
+      if (onDone) onDone();
       dlg.close();
     } catch (e) { $('na-error').textContent = e.message; }
   };
