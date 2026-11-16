@@ -148,6 +148,10 @@ async function transactionsPage(account, q) {
   const b = await api('GetBudget', {});
   const order = dateOrder();
   const txns = order === 'asc' ? [...d.transactions].reverse() : d.transactions;
+  // A name used in more than one group is shown with its group.
+  const nameCount = {};
+  b.groups.forEach(g => g.accounts.forEach(a => { const k = a.name.toLowerCase(); nameCount[k] = (nameCount[k] || 0) + 1; }));
+  const label = a => (nameCount[a.budget_account.toLowerCase()] > 1 && a.group ? `${a.budget_account} (${a.group})` : a.budget_account);
   const base = '#/accounts/' + encodeURIComponent(account);
   $app.innerHTML = errHtml() + `
     <h2 style="margin:0 0 4px">${esc(d.account.name)} <span class="${cls(d.account.balance_cents)}">${fmt(d.account.balance_cents)}</span></h2>
@@ -167,7 +171,7 @@ async function transactionsPage(account, q) {
         <td><input type="checkbox" data-id="${esc(t.id)}" ${selected.has(t.id) ? 'checked' : ''}></td>
         <td>${dmy(t.date)}</td><td>${esc(t.description)}</td>
         <td ${t.status === 'transfer' ? '' : `class="assign" title="Click to assign" data-assign="${esc(t.id)}"`}>${t.status === 'transfer' ? `<span class="tag">Transfer: ${esc(t.link?.account)}</span>` :
-              t.assignments.map(a => `<span class="tag">${esc(a.budget_account)} ${t.assignments.length > 1 ? fmt(a.cents) : ''}</span>`).join('') || '<span class="muted">Unassigned</span>'}</td>
+              t.assignments.map(a => `<span class="tag">${esc(label(a))} ${t.assignments.length > 1 ? fmt(a.cents) : ''}</span>`).join('') || '<span class="muted">Unassigned</span>'}</td>
         <td class="num ${cls(t.cents)}">${fmt(t.cents)}</td><td class="num">${fmt(t.balance_cents)}</td>
         <td class="num"><button data-split="${esc(t.id)}">Split</button> <button data-transfer="${esc(t.id)}" data-linked="${t.link ? 1 : ''}">${t.link ? 'Unlink' : 'Transfer'}</button></td></tr>`).join('')
         || '<tr><td colspan="7" class="muted">No transactions</td></tr>'}
@@ -180,11 +184,11 @@ async function transactionsPage(account, q) {
     if (td.querySelector('select')) return;
     const t = d.transactions.find(x => x.id === td.dataset.assign);
     if (t.assignments.length > 1) return splitDialog(t, b.groups);
-    const cur = t.assignments[0]?.budget_account || '';
+    const cur = t.assignments[0]?.budget_account_id || '';
     const groups = b.groups.filter(g => g.accounts.length).map(g =>
-      `<optgroup label="${esc(g.name)}">${g.accounts.map(a => `<option ${a.name === cur ? 'selected' : ''}>${esc(a.name)}</option>`).join('')}</optgroup>`).join('');
+      `<optgroup label="${esc(g.name)}">${g.accounts.map(a => `<option value="${esc(a.id)}" ${a.id === cur ? 'selected' : ''}>${esc(a.name)}</option>`).join('')}</optgroup>`).join('');
     const sel = document.createElement('select');
-    sel.innerHTML = `<option value="">Unassigned</option><option ${cur === 'Income' ? 'selected' : ''}>Income</option>${groups}<option value="__new">+ New budget account…</option>`;
+    sel.innerHTML = `<option value="">Unassigned</option><option value="income" ${cur === 'income' ? 'selected' : ''}>Income</option>${groups}<option value="__new">+ New budget account…</option>`;
     td.textContent = '';
     td.appendChild(sel);
     sel.focus();
@@ -222,9 +226,9 @@ async function transactionsPage(account, q) {
 function assignDialog(groups, ids) {
   const dlg = document.createElement('dialog');
   const options = groups.filter(g => g.accounts.length).map(g =>
-    `<optgroup label="${esc(g.name)}">${g.accounts.map(a => `<option>${esc(a.name)}</option>`).join('')}</optgroup>`).join('');
+    `<optgroup label="${esc(g.name)}">${g.accounts.map(a => `<option value="${esc(a.id)}">${esc(a.name)}</option>`).join('')}</optgroup>`).join('');
   dlg.innerHTML = `<div class="dlg"><h2>Assign ${ids.length} transaction${ids.length === 1 ? '' : 's'}</h2>
-    <label>Budget account<select id="as-account"><option>Income</option>${options}<option value="__new">+ New budget account…</option></select></label>
+    <label>Budget account<select id="as-account"><option value="income">Income</option>${options}<option value="__new">+ New budget account…</option></select></label>
     <p class="error" id="as-error"></p>
     <div class="row"><button class="primary" id="as-assign">Assign</button><button id="as-cancel">Cancel</button></div></div>`;
   document.body.appendChild(dlg);
@@ -276,12 +280,12 @@ function newAccountDialog(groups, transactionIds, onDone, mode) {
         if (!groupName) throw new Error('Enter a group name');
         group = (await api('AddGroup', { name: groupName })).id;
       }
-      await api('CreateBudgetAccount', { name, group });
+      const made = await api('CreateBudgetAccount', { name, group });
       if (mode) {
         created = true;
-        mode.onCreated(name);
+        mode.onCreated({ id: made.id, name });
       } else {
-        await api('AssignTransactions', { transactions: transactionIds, budget_account: name });
+        await api('AssignTransactions', { transactions: transactionIds, budget_account: made.id });
         if (onDone) onDone();
       }
       dlg.close();
@@ -293,14 +297,14 @@ function newAccountDialog(groups, transactionIds, onDone, mode) {
 
 // Splits a transaction across budget accounts. Each row picks its account from the same list as assigning.
 function splitDialog(t, groups) {
-  const rows = t.assignments.length ? t.assignments : [{ budget_account: '', cents: t.cents }];
+  const rows = t.assignments.length ? t.assignments.map(a => ({ budget_account: a.budget_account_id, cents: a.cents })) : [{ budget_account: '', cents: t.cents }];
   const el = document.getElementById('dialog');
-  const created = []; // accounts made from this editor, which the page does not know about yet
+  const created = []; // { id, name } of accounts made from this editor, which the page does not know about yet
   const options = selected => {
-    const opt = n => `<option ${n === selected ? 'selected' : ''}>${esc(n)}</option>`;
-    return `<option value="">Choose…</option>${opt('Income')}`
-      + groups.filter(g => g.accounts.length).map(g => `<optgroup label="${esc(g.name)}">${g.accounts.map(a => opt(a.name)).join('')}</optgroup>`).join('')
-      + (created.length ? `<optgroup label="New">${created.map(opt).join('')}</optgroup>` : '')
+    const opt = (id, name) => `<option value="${esc(id)}" ${id === selected ? 'selected' : ''}>${esc(name)}</option>`;
+    return `<option value="">Choose…</option>${opt('income', 'Income')}`
+      + groups.filter(g => g.accounts.length).map(g => `<optgroup label="${esc(g.name)}">${g.accounts.map(a => opt(a.id, a.name)).join('')}</optgroup>`).join('')
+      + (created.length ? `<optgroup label="New">${created.map(a => opt(a.id, a.name)).join('')}</optgroup>` : '')
       + '<option value="__new">+ New budget account…</option>';
   };
   const draw = list => {
@@ -316,7 +320,7 @@ function splitDialog(t, groups) {
       if (ev.target.value !== '__new') return;
       const current = read();
       newAccountDialog(groups, null, null, {
-        onCreated: name => { created.push(name); current[i].budget_account = name; draw(current); },
+        onCreated: account => { created.push(account); current[i].budget_account = account.id; draw(current); },
         onCancel: () => { current[i].budget_account = list[i].budget_account; draw(current); },
       });
     });

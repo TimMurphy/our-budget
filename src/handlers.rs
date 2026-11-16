@@ -8,7 +8,7 @@ use crate::model::{monthly_cents, slug, Event, Split, INCOME, UNGROUPED};
 use crate::read;
 use rusqlite::Connection;
 use serde_json::{json, Value};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 type Res = Result<Value, String>;
 
@@ -185,7 +185,14 @@ fn get_transactions(app: &mut App, v: &Value) -> Res {
         };
         let mut assignments = vec![];
         for s in &t.splits {
-            assignments.push(json!({ "budget_account": read::account_name(c, &s.account)?, "cents": s.cents }));
+            let account = read::budget_account_by_id(c, &s.account)?;
+            let group = match &account {
+                Some(a) => read::group(c, &a.group)?.map(|g| g.name),
+                None => None,
+            };
+            assignments.push(json!({
+                "budget_account": account.as_ref().map(|a| a.name.clone()).unwrap_or_else(|| s.account.clone()),
+                "budget_account_id": s.account, "group": group, "cents": s.cents }));
         }
         list.push(json!({
             "id": t.id, "date": t.date, "description": t.description, "cents": t.cents,
@@ -272,10 +279,8 @@ fn resolve_or_create(c: &Connection, name: &str, created: &mut HashMap<String, S
     if let Some(id) = created.get(&key) {
         return Ok(id.clone());
     }
-    let id = slug(name);
-    if id.is_empty() {
-        return Err("invalid budget account name".into());
-    }
+    let taken: HashSet<String> = created.values().cloned().collect();
+    let id = unique_id(c, name, UNGROUPED, &taken)?;
     events.push(Event::BudgetAccountCreated { id: id.clone(), name: name.trim().to_string(), group: UNGROUPED.into() });
     created.insert(key, id.clone());
     Ok(id)
@@ -388,17 +393,42 @@ fn reorder_groups(app: &mut App, v: &Value) -> Res {
     ok()
 }
 
+/// An id for a new budget account: the name's slug, made unique with the group and a number if need be.
+fn unique_id(c: &Connection, name: &str, group: &str, taken: &HashSet<String>) -> Result<String, String> {
+    let base = slug(name);
+    if base.is_empty() {
+        return Err("invalid budget account name".into());
+    }
+    let mut candidate = base.clone();
+    let mut n = 1;
+    while taken.contains(&candidate) || read::budget_account_by_id(c, &candidate)?.is_some() {
+        n += 1;
+        candidate = if n == 2 { format!("{base}-{}", slug(group)) } else { format!("{base}-{}-{n}", slug(group)) };
+    }
+    Ok(candidate)
+}
+
+/// Names are unique within a group, ignoring case. "Income" is reserved for the fixed Income account.
+fn name_taken(c: &Connection, name: &str, group: &str, except: Option<&str>) -> Result<bool, String> {
+    if name.eq_ignore_ascii_case("income") {
+        return Ok(true);
+    }
+    Ok(read::budget_accounts(c)?
+        .iter()
+        .any(|a| !a.closed && a.group == group && a.name.eq_ignore_ascii_case(name) && Some(a.id.as_str()) != except))
+}
+
 fn create_budget_account(app: &mut App, v: &Value) -> Res {
     let c = app.store.conn();
     let name = text(v, "name")?;
-    let id = slug(&name);
-    if id.is_empty() || read::budget_account(c, &name)?.is_some() || read::budget_account(c, &id)?.is_some() {
-        return Err("a budget account with that name already exists".into());
-    }
     let group = match opt_text(v, "group") {
         Some(g) => read::group(c, &g)?.ok_or("no such group")?.id,
         None => UNGROUPED.into(),
     };
+    if name_taken(c, &name, &group, None)? {
+        return Err("a budget account with that name already exists in that group".into());
+    }
+    let id = unique_id(c, &name, &group, &HashSet::new())?;
     app.record(vec![Event::BudgetAccountCreated { id: id.clone(), name, group }])?;
     Ok(json!({ "id": id }))
 }
@@ -415,8 +445,9 @@ fn rename_budget_account(app: &mut App, v: &Value) -> Res {
     let c = app.store.conn();
     let id = editable(c, &text(v, "id")?)?;
     let name = text(v, "name")?;
-    if read::budget_account(c, &name)?.is_some_and(|a| a.id != id) {
-        return Err("a budget account with that name already exists".into());
+    let group = read::budget_account_by_id(c, &id)?.map(|a| a.group).unwrap_or_default();
+    if name_taken(c, &name, &group, Some(&id))? {
+        return Err("a budget account with that name already exists in that group".into());
     }
     app.record(vec![Event::BudgetAccountRenamed { id, name }])?;
     ok()
@@ -437,6 +468,10 @@ fn move_budget_account(app: &mut App, v: &Value) -> Res {
     let c = app.store.conn();
     let id = editable(c, &text(v, "id")?)?;
     let group = read::group(c, &text(v, "group")?)?.ok_or("no such group")?.id;
+    let name = read::budget_account_by_id(c, &id)?.map(|a| a.name).unwrap_or_default();
+    if name_taken(c, &name, &group, Some(&id))? {
+        return Err("a budget account with that name already exists in that group".into());
+    }
     app.record(vec![Event::BudgetAccountMoved { id, group }])?;
     ok()
 }

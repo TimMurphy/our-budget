@@ -169,7 +169,11 @@ data/back-accounts/Westpac - Our Account.csv
 ### Budget accounts
 
 - A budget account has a name and belongs to exactly one group.
-- Names are unique, ignoring case.
+- A budget account name is unique within its group, ignoring case. Two budget accounts in different groups can have the same name, for example "Insurance" in "Bills" and "Insurance" in "Kids".
+- "Income" is reserved for the fixed Income account, so no other budget account can be called that, in any group.
+- Creating, renaming or dragging a budget account onto a name already used in the target group is refused.
+- Every budget account has its own id, so same-named accounts stay separate. The screens choose accounts by id. Where a name is shown and the same name is used in more than one group, the group is shown with it, for example "Insurance (Bills)".
+- Anything that identifies a budget account by name (for example assigning by name through the API) must use a name that only one open account has. A name used in more than one group is refused with "more than one budget account is named …", and the id or the group must be used instead.
 - A budget account can be renamed. Its history is kept.
 - A budget account can be closed once its Available is zero. A closed account no longer appears on the budget screen or in the assign list, and its past assignments remain.
 - New budget accounts start in the group "Ungrouped".

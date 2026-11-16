@@ -226,15 +226,35 @@ pub fn budget_accounts(c: &Connection) -> R<Vec<BudgetAccount>> {
     rows.collect::<Result<_, _>>().map_err(err)
 }
 
-/// Finds a budget account by id or by name, ignoring case.
+fn budget_matches(c: &Connection, key: &str) -> R<Vec<BudgetAccount>> {
+    let mut s = c
+        .prepare(&format!("{BUDGET_COLS} WHERE id = ?1 OR lower(name) = lower(?1) ORDER BY rowid"))
+        .map_err(err)?;
+    let rows = s.query_map(params![key], budget_row).map_err(err)?;
+    rows.collect::<Result<_, _>>().map_err(err)
+}
+
+/// Finds a budget account by id, or else by name ignoring case. Names are only unique within a group,
+/// so a name used by more than one open account is an error: the caller must use the id.
 pub fn budget_account(c: &Connection, key: &str) -> R<Option<BudgetAccount>> {
-    c.query_row(&format!("{BUDGET_COLS} WHERE id = ?1 OR lower(name) = lower(?1)"), params![key], budget_row)
-        .optional()
-        .map_err(err)
+    let matches = budget_matches(c, key)?;
+    if let Some(a) = matches.iter().find(|a| a.id == key) {
+        return Ok(Some(a.clone()));
+    }
+    let open: Vec<&BudgetAccount> = matches.iter().filter(|a| !a.closed).collect();
+    match open.len() {
+        0 => Ok(matches.into_iter().next()),
+        1 => Ok(Some(open[0].clone())),
+        _ => Err(format!("more than one budget account is named {key}; choose the one in the group you want")),
+    }
+}
+
+pub fn budget_account_by_id(c: &Connection, id: &str) -> R<Option<BudgetAccount>> {
+    c.query_row(&format!("{BUDGET_COLS} WHERE id = ?1"), params![id], budget_row).optional().map_err(err)
 }
 
 pub fn account_name(c: &Connection, id: &str) -> R<String> {
-    Ok(budget_account(c, id)?.map(|a| a.name).unwrap_or_else(|| id.to_string()))
+    Ok(budget_account_by_id(c, id)?.map(|a| a.name).unwrap_or_else(|| id.to_string()))
 }
 
 // ---------- the budget ----------

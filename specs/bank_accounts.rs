@@ -133,3 +133,10 @@ fn unlink(w: &mut BudgetWorld, description: String, account: String) {
 fn import_from(w: &mut BudgetWorld, date: String) {
     w.app.import_from = date;
 }
+
+#[when(expr = "I assign {string} in {string} to {string} in group {string}")]
+fn assign_in_group(w: &mut BudgetWorld, description: String, account: String, budget_account: String, group: String) {
+    let account_id = crate::budgets::account_id(w, &budget_account, &group);
+    let id = txn_id(w, &account, &description);
+    w.send("AssignTransactions", json!({ "transactions": [id], "budget_account": account_id }));
+}
