@@ -77,6 +77,7 @@ fn run() -> Result<(), String> {
     let window = WindowBuilder::new()
         .with_title("Our Budget")
         .with_inner_size(LogicalSize::new(1180.0, 820.0))
+        .with_maximized(true)
         .build(&event_loop)
         .map_err(|e| e.to_string())?;
 

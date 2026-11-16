@@ -10,7 +10,7 @@ Opening balances are as at close of business 30/10/2026 and are kept in [secrets
 
 ## Running
 
-- `cargo run` starts the application. It opens a native window titled "Our Budget" that shows the pages using the operating system's own web view. There is no web server, no port and no browser: the page talks to the application inside the same process, so nothing is reachable over the network.
+- `cargo run` starts the application. It opens a native window titled "Our Budget", maximized to fill the screen (the title bar and taskbar stay visible, and the window can be restored to a smaller size), that shows the pages using the operating system's own web view. There is no web server, no port and no browser: the page talks to the application inside the same process, so nothing is reachable over the network.
 - On Windows, if `cargo` cannot find the C++ build tools, run it as `./cargo.ps1 run` (or `./cargo.ps1 test --test specs`). The script finds a Visual Studio C++ toolset that has the headers and libraries, sets up the environment and then runs cargo.
 - `cargo test --test specs` runs every feature file in `specs/`. The steps drive the application through the mediator, against an in-memory event store and a temporary statements folder.
 - Opening balances are read from `data/secrets.md`, one line per bank account in the form `- <account name>: <amount>`, for example `- NAB - Home Loan: -123456.78`. A missing line means an opening balance of $0.00.
