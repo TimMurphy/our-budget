@@ -1,6 +1,6 @@
 # Our Budget
 
-Our Budget is a cross-platform application (Windows, Linux, macOS (not tested) and web browser) that tracks our spending and savings. It keeps its data in a SQLite database, `data/databases/our-budget.db`.
+Our Budget is a cross-platform desktop application (Windows, Linux and macOS (not tested)) that tracks our spending and savings. It keeps its data in a SQLite database, `data/databases/our-budget.db`.
 
 It is written in Rust. Specs and tests are Gherkin feature files, with their Rust step definitions, in `specs/` (see [AI.md](../AI.md)).
 
@@ -10,7 +10,7 @@ Opening balances are as at close of business 30/10/2026 and are kept in [secrets
 
 ## Running
 
-- `cargo run` starts the application on http://localhost:4000. It serves the web page and a JSON API (`POST /api/<RequestType>`) that forwards to the mediator.
+- `cargo run` starts the application. It opens a native window titled "Our Budget" that shows the pages using the operating system's own web view. There is no web server, no port and no browser: the page talks to the application inside the same process, so nothing is reachable over the network.
 - On Windows, if `cargo` cannot find the C++ build tools, run it as `./cargo.ps1 run` (or `./cargo.ps1 test --test specs`). The script finds a Visual Studio C++ toolset that has the headers and libraries, sets up the environment and then runs cargo.
 - `cargo test --test specs` runs every feature file in `specs/`. The steps drive the application through the mediator, against an in-memory event store and a temporary statements folder.
 - Opening balances are read from `data/secrets.md`, one line per bank account in the form `- <account name>: <amount>`, for example `- NAB - Home Loan: -123456.78`. A missing line means an opening balance of $0.00.
@@ -18,13 +18,18 @@ Opening balances are as at close of business 30/10/2026 and are kept in [secrets
 
 ## Building
 
-- `cargo build --release` produces one native executable for the operating system it is built on. The web page is embedded in it, so there is nothing else to install. The database and statements are read from `data/` relative to where the program is started.
+- `cargo build --release` produces one native executable (`target/release/our-budget.exe` on Windows) for the operating system it is built on. The pages are embedded in it, so there is nothing else to install except the web view the operating system provides. In a release build on Windows no console window opens.
 - Windows, Linux and macOS each have a native build. Each is built on that operating system, because the bundled SQLite is C code that needs that system's C compiler. Cross-compiling to macOS is not supported.
 - Targets:
     - Windows: `x86_64-pc-windows-msvc`
     - Linux: `x86_64-unknown-linux-gnu`
     - macOS: `aarch64-apple-darwin`, and `x86_64-apple-darwin` for Intel Macs
-- The program serves the web page on `127.0.0.1` only, so it can be reached from the same computer only. It has no window of its own. Use a web browser.
+- The web view that draws the window:
+    - Windows: Microsoft Edge WebView2, which is included with Windows 11 and current Windows 10.
+    - macOS: WebKit, which is part of the system.
+    - Linux: WebKitGTK, installed with the system package manager (`libwebkit2gtk-4.1` and its development files to build).
+- The `data` folder is the one in the folder the program is started from. If there is none there, the one beside the executable is used. If neither exists, one is created in the current folder. The web view keeps its own settings, such as the remembered date order, in `data/webview`.
+- If the program cannot start, it writes the reason to `data/error.txt`.
 - macOS is not tested.
 
 ## Concepts
