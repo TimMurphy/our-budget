@@ -179,7 +179,7 @@ async function transactionsPage(account, q) {
       <span class="muted" id="bulk-count"></span>
     </div>
     <div class="card scroll"><table>
-      <tr><th></th><th id="sort-date" class="sortable" title="Click to reverse the order">Date ${order === 'asc' ? '&#9650;' : '&#9660;'}</th><th>Description</th><th>Assigned to</th><th class="num">Amount</th><th class="num">Balance</th><th></th></tr>
+      <tr><th><input type="checkbox" id="select-all" title="Tick or untick every transaction in this list"></th><th id="sort-date" class="sortable" title="Click to reverse the order">Date ${order === 'asc' ? '&#9650;' : '&#9660;'}</th><th>Description</th><th>Assigned to</th><th class="num">Amount</th><th class="num">Balance</th><th></th></tr>
       ${txns.map(t => `<tr>
         <td><input type="checkbox" data-id="${esc(t.id)}" ${selected.has(t.id) ? 'checked' : ''}></td>
         <td>${dmy(t.date)}</td><td class="desc" data-rule="${esc(t.id)}" title="Click to make an auto assign rule from this description">${esc(t.description)}</td>
@@ -216,11 +216,25 @@ async function transactionsPage(account, q) {
     sel.onblur = () => render();
   });
   document.getElementById('search').onchange = e => goto(`${base}?filter=${filter}&search=${encodeURIComponent(e.target.value)}`);
-  $app.querySelectorAll('input[type=checkbox]').forEach(c => c.onchange = () => c.checked ? selected.add(c.dataset.id) : selected.delete(c.dataset.id));
+  const rowBoxes = [...$app.querySelectorAll('input[type=checkbox][data-id]')];
+  rowBoxes.forEach(c => c.onchange = () => c.checked ? selected.add(c.dataset.id) : selected.delete(c.dataset.id));
   const countEl = document.getElementById('bulk-count');
   const showCount = () => { countEl.textContent = selected.size ? `${selected.size} selected` : 'Tick transactions to assign them together'; };
   showCount();
-  $app.querySelectorAll('input[type=checkbox]').forEach(c => c.addEventListener('change', showCount));
+  // Select all ticks every transaction in the list as filtered and searched, not ones hidden by them.
+  const selectAll = document.getElementById('select-all');
+  const syncSelectAll = () => {
+    const n = rowBoxes.filter(c => c.checked).length;
+    selectAll.disabled = !rowBoxes.length;
+    selectAll.checked = n > 0 && n === rowBoxes.length;
+    selectAll.indeterminate = n > 0 && n < rowBoxes.length;
+  };
+  selectAll.onchange = () => {
+    rowBoxes.forEach(c => { c.checked = selectAll.checked; selectAll.checked ? selected.add(c.dataset.id) : selected.delete(c.dataset.id); });
+    showCount();
+  };
+  rowBoxes.forEach(c => c.addEventListener('change', () => { showCount(); syncSelectAll(); }));
+  syncSelectAll();
   document.getElementById('bulk-assign').onclick = () => {
     if (!selected.size) { error = 'Tick the transactions to assign first'; return render(); }
     assignDialog(b.groups, [...selected]);

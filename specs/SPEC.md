@@ -95,6 +95,7 @@ Rules that apply everywhere:
 - Filters: All transactions, Unassigned, Pending approval, Assigned. Pending approval lists the transactions an auto assign rule assigned that have not been approved yet. Assigned includes them. A bank account opens on Unassigned. The selected filter is shown in the page address so it survives a refresh.
 - Shows how many transactions are unassigned and their total, and how many are pending approval.
 - A transaction that is pending approval shows a "Pending approval" tag beside its budget account.
+- The tick box in the column heading is Select all. It ticks every transaction in the list as it is filtered and searched, and unticks them when ticked again. It shows a dash when only some are ticked, and is disabled when the list is empty. Transactions hidden by the filter or search are not ticked.
 - Ticking transactions and choosing "Approve selected" approves them. With nothing ticked it shows a message and changes nothing. Approving does not change the assignment, it only clears the pending approval.
 - Searching by description narrows the list within the current filter.
 
