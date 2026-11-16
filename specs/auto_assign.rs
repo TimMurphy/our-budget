@@ -1,4 +1,4 @@
-//! Steps for auto-assign.feature.
+//! Steps for auto_assign.feature.
 
 use crate::bank_accounts::txn_id;
 use crate::BudgetWorld;

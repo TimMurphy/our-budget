@@ -1,4 +1,4 @@
-//! Steps for bank-accounts.feature.
+//! Steps for bank_accounts.feature.
 
 use crate::{cents, table, BudgetWorld};
 use cucumber::{gherkin::Step, given, then, when};

@@ -1,4 +1,4 @@
-//! Steps for opening-balances.feature.
+//! Steps for opening_balances.feature.
 
 use crate::BudgetWorld;
 use cucumber::{gherkin::Step, given, when};

@@ -1,4 +1,4 @@
-//! Steps for read-model.feature.
+//! Steps for read_model.feature.
 
 use crate::BudgetWorld;
 use cucumber::{given, then, when};
