@@ -136,6 +136,10 @@ async function accountsPage() {
   };
 }
 
+// Groups in alphabetical order, and each group's budget accounts in alphabetical order.
+const byName = (a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
+const alphabetical = groups => [...groups].sort(byName).map(g => ({ ...g, accounts: [...g.accounts].sort(byName) }));
+
 // Newest first ('desc') unless the viewer reversed it. Remembered in this browser.
 function dateOrder() {
   try { return localStorage.getItem('dateOrder') === 'asc' ? 'asc' : 'desc'; } catch (e) { return 'desc'; }
@@ -146,6 +150,7 @@ async function transactionsPage(account, q) {
   const filter = q.get('filter') || 'unassigned', search = q.get('search') || '';
   const d = await api('GetTransactions', { account, filter, search });
   const b = await api('GetBudget', {});
+  b.groups = alphabetical(b.groups); // every budget account list below is in this order
   const order = dateOrder();
   const txns = order === 'asc' ? [...d.transactions].reverse() : d.transactions;
   // A name used in more than one group is shown with its group.
@@ -255,7 +260,7 @@ function newAccountDialog(groups, transactionIds, onDone, mode) {
   let created = false;
   const dlg = document.createElement('dialog');
   dlg.innerHTML = `<div class="dlg"><h2>New budget account</h2>
-    <label>Group<select id="na-group">${[...groups].sort((a, b) => a.name.localeCompare(b.name)).map(g => `<option value="${esc(g.id)}">${esc(g.name)}</option>`).join('')}
+    <label>Group<select id="na-group">${alphabetical(groups).map(g => `<option value="${esc(g.id)}">${esc(g.name)}</option>`).join('')}
       <option value="__group">+ Add group…</option></select></label>
     <label id="na-group-name-row" hidden>New group name<input id="na-group-name"></label>
     <label>Budget account name<input id="na-name"></label>
@@ -348,6 +353,7 @@ const PERIODS = ['Yearly', 'Quarterly', 'Monthly', 'Fortnight', 'Weekly'];
 
 async function budgetPage(q) {
   const d = await api('GetBudget', { month: q.get('month') || undefined });
+  d.groups = alphabetical(d.groups);
   const link = m => `#/budget?month=${m}`;
   $app.innerHTML = errHtml() + `
     <div class="row"><a href="${link(shiftMonth(d.month, -1))}"><button>&larr;</button></a><strong>${d.month}</strong>

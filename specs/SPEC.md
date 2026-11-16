@@ -97,6 +97,7 @@ Rules that apply everywhere:
 ### Assigning transactions
 
 - A transaction can be assigned to one budget account, or split across several.
+- Wherever a budget account is chosen from a list (the "Assigned to" cell, Assign selected and the split editor), the list is Income first, then the groups in alphabetical order, with each group's budget accounts in alphabetical order. Alphabetical ignores case.
 - In the split editor each row chooses its budget account from the same drop-down as assigning: Income, then the accounts grouped by group, then "+ New budget account…". That opens the same new-budget-account dialog, which here only creates the account (it does not assign anything) and then selects it in that row. Cancelling the dialog puts the row back as it was. Each row also has an amount, and the amounts must add up to the transaction amount.
 - The assigned amounts must add up exactly to the transaction amount. A split cannot be saved otherwise.
 - A transaction with its full amount assigned is Assigned. A transaction with nothing or only part assigned is Unassigned.
@@ -149,7 +150,7 @@ data/back-accounts/Westpac - Our Account.csv
 ### Budget screen
 
 - Shows one month at a time, with previous and next month controls. It opens on the current month.
-- Groups are shown as sections. Each section lists its budget accounts and shows the group total.
+- Groups are shown as sections in alphabetical order, ignoring case. Each section lists its budget accounts in alphabetical order and shows the group total.
 - For each budget account the screen shows:
     - Budgeted: money set aside this month.
     - Spent: the sum of assignments this month.
@@ -184,7 +185,7 @@ data/back-accounts/Westpac - Our Account.csv
 - "Ungrouped" is a built-in group. It cannot be renamed or removed.
 
 - A group has a name. Names are unique, ignoring case.
-- Groups can be added, renamed and reordered.
+- Groups can be added and renamed. They are always shown in alphabetical order, so they are not reordered by hand.
 - A group can be removed only when it has no budget accounts.
 - Budget accounts are dragged and dropped between groups. The new group applies to every month, not only the one on screen.
 
