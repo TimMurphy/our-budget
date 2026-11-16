@@ -1,19 +1,18 @@
-//! Steps for bank-accounts.feature.
+//! Steps for bank_accounts.feature.
 
 use crate::{cents, table, BudgetWorld};
 use cucumber::{gherkin::Step, given, then, when};
 use serde_json::{json, Value};
 
-fn txn_id(w: &BudgetWorld, account: &str, description: &str) -> String {
-    let acct = w.app.model.bank_account(account).expect("bank account").id.clone();
-    w.app
-        .model
-        .txns
-        .iter()
-        .find(|t| t.account == acct && t.description == description)
+pub fn txn_id(w: &BudgetWorld, account: &str, description: &str) -> String {
+    let c = w.app.store.conn();
+    let acct = our_budget::read::bank_account(c, account).unwrap().expect("bank account").id;
+    our_budget::read::txns_for_account(c, &acct)
+        .unwrap()
+        .into_iter()
+        .find(|t| t.description == description)
         .unwrap_or_else(|| panic!("no transaction {description} in {account}"))
         .id
-        .clone()
 }
 
 fn transactions(w: &mut BudgetWorld, account: &str, filter: &str, search: &str) -> Value {
@@ -75,6 +74,7 @@ fn assign(w: &mut BudgetWorld, description: String, account: String, budget_acco
     w.send("AssignTransactions", json!({ "transactions": [id], "budget_account": budget_account }));
 }
 
+#[given(expr = "I unassign {string} in {string}")]
 #[when(expr = "I unassign {string} in {string}")]
 fn unassign(w: &mut BudgetWorld, description: String, account: String) {
     let id = txn_id(w, &account, &description);
@@ -128,4 +128,32 @@ fn link(w: &mut BudgetWorld, d1: String, a1: String, d2: String, a2: String) {
 fn unlink(w: &mut BudgetWorld, description: String, account: String) {
     let id = txn_id(w, &account, &description);
     w.ok("UnlinkTransfer", json!({ "transaction": id }));
+}
+
+#[given(expr = "transactions before {string} are not imported")]
+fn import_from(w: &mut BudgetWorld, date: String) {
+    w.app.import_from = date;
+}
+
+#[when(expr = "I assign {string} in {string} to {string} in group {string}")]
+fn assign_in_group(w: &mut BudgetWorld, description: String, account: String, budget_account: String, group: String) {
+    let account_id = crate::budgets::account_id(w, &budget_account, &group);
+    let id = txn_id(w, &account, &description);
+    w.send("AssignTransactions", json!({ "transactions": [id], "budget_account": account_id }));
+}
+
+#[then(expr = "the transfer candidates for {string} in {string} are {string}")]
+fn transfer_candidates(w: &mut BudgetWorld, description: String, account: String, expected: String) {
+    let id = txn_id(w, &account, &description);
+    let v = w.ok("GetTransferCandidates", json!({ "transaction": id }));
+    let found: Vec<&str> = v["candidates"].as_array().unwrap().iter().map(|c| c["description"].as_str().unwrap()).collect();
+    assert_eq!(found.join(", "), expected);
+}
+
+#[then(expr = "the bank account list shows {string} with {int} unassigned and {int} pending approval")]
+fn account_list_counts(w: &mut BudgetWorld, account: String, unassigned: u64, pending: u64) {
+    let v = w.ok("ListBankAccounts", json!({}));
+    let a = v["accounts"].as_array().unwrap().iter().find(|a| a["name"] == account.as_str()).expect("bank account");
+    assert_eq!(a["unassigned"].as_u64().unwrap(), unassigned, "unassigned");
+    assert_eq!(a["pending"].as_u64().unwrap(), pending, "pending approval");
 }

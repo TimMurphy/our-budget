@@ -139,3 +139,41 @@ Feature: Budgets
     When I budget "$0.00" for "Gifts" in "2026-11"
     And I close budget account "Gifts"
     Then budget screen has no budget account "Gifts"
+
+  Scenario: Budget accounts in different groups can have the same name
+    Given I add group "Bills"
+    And I create budget account "Insurance" in group "Bills"
+    When I create budget account "Insurance"
+    Then group "Bills" has budget accounts "Insurance"
+    And group "Ungrouped" has budget accounts "Insurance"
+    When I create budget account "insurance" in group "Bills"
+    Then the request fails with "already exists in that group"
+
+  Scenario: Income is a reserved name
+    Given I add group "Bills"
+    When I create budget account "Income" in group "Bills"
+    Then the request fails with "already exists"
+
+  Scenario: A name used in two groups must be chosen by group when assigning
+    Given the "Joint" statement contains:
+      | date       | amount | description |
+      | 2026-11-02 | -80.00 | Premium     |
+    And the statements have been imported
+    And I add group "Bills"
+    And I create budget account "Insurance" in group "Bills"
+    And I create budget account "Insurance"
+    When I assign "Premium" in "Joint" to "Insurance"
+    Then the request fails with "more than one budget account"
+    When I assign "Premium" in "Joint" to "Insurance" in group "Bills"
+    Then in "2026-11" budget account "Insurance" in group "Bills" shows budgeted "$0.00", spent "-$80.00" and available "-$80.00"
+    And in "2026-11" budget account "Insurance" in group "Ungrouped" shows budgeted "$0.00", spent "$0.00" and available "$0.00"
+
+  Scenario: A budget account cannot be renamed or moved onto a name already used in the group
+    Given I add group "Bills"
+    And I create budget account "Insurance" in group "Bills"
+    And I create budget account "Rates" in group "Bills"
+    And I create budget account "Insurance"
+    When I rename budget account "Rates" to "insurance"
+    Then the request fails with "already exists in that group"
+    When I move the budget account "Insurance" in group "Ungrouped" to group "Bills"
+    Then the request fails with "already exists in that group"

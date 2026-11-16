@@ -2,8 +2,11 @@
 //! Steps drive the application through its mediator, against an in-memory event
 //! store and a temporary statements folder.
 
+mod auto_assign;
 mod bank_accounts;
 mod budgets;
+mod opening_balances;
+mod read_model;
 
 use cucumber::{gherkin::Step, given, then, when, World};
 use our_budget::app::App;
@@ -13,7 +16,6 @@ use our_budget::event_store::EventStore;
 use our_budget::mediator::Mediator;
 use our_budget::money::parse_cents;
 use serde_json::{json, Value};
-use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 static COUNTER: AtomicUsize = AtomicUsize::new(0);
@@ -30,7 +32,7 @@ impl BudgetWorld {
     fn new() -> Self {
         let dir = std::env::temp_dir().join(format!("our-budget-specs-{}-{}", std::process::id(), COUNTER.fetch_add(1, Ordering::SeqCst)));
         std::fs::create_dir_all(&dir).unwrap();
-        let mut app = App::new(EventStore::open_in_memory().unwrap(), dir).unwrap();
+        let mut app = App::new(EventStore::open(&dir.join("our-budget.db")).unwrap(), dir).unwrap();
         app.today_override = Some("2026-11-16".into());
         BudgetWorld { app, mediator: Mediator::default(), last: Ok(json!({})) }
     }
@@ -89,13 +91,14 @@ fn bank_account(w: &mut BudgetWorld, bank: String, name: String, opening: String
 }
 
 fn write_statement(w: &mut BudgetWorld, account: &str, text: String) {
-    let acct = w.app.model.bank_account(account).expect("bank account").clone();
+    let acct = our_budget::read::bank_account(w.app.store.conn(), account).unwrap().expect("bank account");
     std::fs::write(w.app.statements_dir.join(&acct.file), text).unwrap();
 }
 
 #[given(expr = "the {string} statement contains:")]
+#[when(expr = "the {string} statement contains:")]
 fn statement(w: &mut BudgetWorld, step: &Step, account: String) {
-    let bank = w.app.model.bank_account(&account).expect("bank account").bank.clone();
+    let bank = our_budget::read::bank_account(w.app.store.conn(), &account).unwrap().expect("bank account").bank;
     let lines: Vec<String> = table(step).iter().map(|r| statement_line(&bank, &r[0], &r[1], &r[2])).collect();
     write_statement(w, &account, lines.join("\n"));
 }

@@ -6,16 +6,28 @@
 <title>Our Budget</title>
 <style>
   :root { --bg:#f6f7f9; --card:#fff; --text:#1c2430; --muted:#667085; --line:#e4e7ec; --accent:#2457d6; --bad:#c0262d; --good:#157f3c; }
-  :root { --link:#2457d6; }
+  :root { --link:#2457d6; color-scheme: light dark; }
   @media (prefers-color-scheme: dark) { :root { --bg:#12161c; --card:#1b212b; --text:#e8ecf2; --muted:#98a2b3; --line:#2b3340; --accent:#6c93ff; --link:#f5c451; --bad:#ff6b72; --good:#4cc57c; } }
   * { box-sizing: border-box; }
   a { color:var(--link); }
-  body { margin:0; font:15px/1.4 system-ui, sans-serif; background:var(--bg); color:var(--text); }
+  html, body { height:100%; }
+  body { margin:0; font:15px/1.4 system-ui, sans-serif; background:var(--bg); color:var(--text); display:flex; flex-direction:column; }
+  header { flex:none; }
   header { display:flex; gap:16px; align-items:center; padding:12px 16px; background:var(--card); border-bottom:1px solid var(--line); flex-wrap:wrap; }
   header a { color:var(--muted); text-decoration:none; font-weight:600; }
   header a.on { color:var(--link); }
+  .dropdown { position:relative; }
+  .menu { display:none; position:absolute; top:100%; left:-8px; min-width:260px; background:var(--card); border:1px solid var(--line); border-radius:8px; padding:4px 0; z-index:10; box-shadow:0 4px 12px rgba(0,0,0,.25); }
+  .dropdown:hover .menu, .dropdown:focus-within .menu { display:block; }
+  .dropdown.closed .menu { display:none; }
+  .menu a { display:block; padding:7px 12px; white-space:nowrap; color:var(--link); }
+  .menu a:hover { background:var(--bg); }
   header h1 { font-size:17px; margin:0 12px 0 0; }
-  main { max-width:960px; margin:0 auto; padding:16px; }
+  main { width:100%; max-width:960px; margin:0 auto; padding:16px; flex:1; min-height:0; overflow:auto; }
+  /* The transactions page: the heading and filters stay put and only the list scrolls. */
+  main.fill { display:flex; flex-direction:column; overflow:auto; padding-top:6px; }
+  main.fill > .scroll { flex:1; min-height:280px; overflow:auto; margin-bottom:0; }
+  .scroll th { position:sticky; top:0; z-index:1; background:var(--card); box-shadow:0 1px 0 var(--line); }
   .card { background:var(--card); border:1px solid var(--line); border-radius:8px; margin-bottom:16px; overflow:hidden; }
   .card h2 { font-size:15px; margin:0; padding:10px 12px; border-bottom:1px solid var(--line); display:flex; justify-content:space-between; gap:8px; }
   table { width:100%; border-collapse:collapse; }
@@ -32,6 +44,19 @@
   .banner.bad { border-color:var(--bad); color:var(--bad); }
   .drop { outline:2px dashed var(--accent); outline-offset:-4px; }
   tr[draggable=true] { cursor:grab; }
+  dialog { background:var(--card); color:var(--text); border:1px solid var(--line); border-radius:8px; padding:16px; min-width:min(380px, 92vw); }
+  dialog::backdrop { background:rgba(0,0,0,.5); }
+  dialog h2 { margin:0 0 12px; font-size:16px; }
+  dialog label { display:block; margin-bottom:12px; color:var(--muted); font-size:13px; }
+  dialog label select, dialog label input { display:block; width:100%; margin-top:4px; font-size:15px; color:var(--text); }
+  dialog label[hidden] { display:none; }
+  dialog .error { min-height:1.2em; margin:0 0 8px; }
+  th.sortable { cursor:pointer; user-select:none; white-space:nowrap; }
+  td.desc { cursor:pointer; }
+  td.desc:hover { text-decoration:underline; text-decoration-color:var(--link); }
+  td.assign { cursor:pointer; }
+  td.assign:hover { background:var(--bg); }
+  .tag.pending { background:transparent; border:1px solid var(--link); color:var(--link); }
   .tag { display:inline-block; font-size:12px; padding:1px 7px; border-radius:10px; background:var(--line); margin-right:4px; }
   input.amt { width:110px; text-align:right; }
   @media (max-width:600px) { td, th { padding:6px 8px; } main { padding:8px; } }
@@ -40,8 +65,12 @@
 <body>
 <header>
   <h1>Our Budget</h1>
-  <a href="#/accounts" id="nav-accounts">Bank accounts</a>
+  <div class="dropdown">
+    <a href="#/accounts" id="nav-accounts">Bank accounts &#9662;</a>
+    <div class="menu" id="nav-menu"></div>
+  </div>
   <a href="#/budget" id="nav-budget">Budget</a>
+  <a href="#/auto-assign" id="nav-auto">Auto assign</a>
 </header>
 <main id="app"></main>
 <script>
@@ -72,17 +101,36 @@ function route() {
 }
 function goto(hash) { location.hash = hash; }
 
+// Choosing an account closes the menu, even though the mouse is still over it. It opens again
+// the next time the mouse comes back to "Bank accounts".
+const navDropdown = document.querySelector('.dropdown');
+navDropdown.addEventListener('click', e => { if (e.target.closest('.menu a')) navDropdown.classList.add('closed'); });
+navDropdown.addEventListener('mouseleave', () => navDropdown.classList.remove('closed'));
+
+async function loadNav() {
+  try {
+    const d = await api('ListBankAccounts');
+    document.getElementById('nav-menu').innerHTML =
+      d.accounts.map(a => `<a href="#/accounts/${encodeURIComponent(a.id)}">${esc(a.name)}</a>`).join('');
+  } catch (e) { /* the page shows its own error */ }
+}
+
 async function render() {
+  if (document.activeElement && document.activeElement.closest('.dropdown')) document.activeElement.blur();
+  loadNav();
   const { parts, q } = route();
-  document.getElementById('nav-accounts').className = parts[0] === 'budget' ? '' : 'on';
+  document.getElementById('nav-accounts').className = parts[0] === 'budget' || parts[0] === 'auto-assign' ? '' : 'on';
   document.getElementById('nav-budget').className = parts[0] === 'budget' ? 'on' : '';
+  document.getElementById('nav-auto').className = parts[0] === 'auto-assign' ? 'on' : '';
+  $app.classList.toggle('fill', parts[0] === 'accounts' && !!parts[1]);
   try {
     if (parts[0] === 'budget') await budgetPage(q);
+    else if (parts[0] === 'auto-assign') await autoAssignPage();
     else if (parts[0] === 'accounts' && parts[1]) await transactionsPage(decodeURIComponent(parts[1]), q);
     else await accountsPage();
   } catch (e) { $app.innerHTML = `<p class="error">${esc(e.message)}</p>`; }
 }
-window.addEventListener('hashchange', () => { error = ''; render(); });
+window.addEventListener('hashchange', () => { error = ''; selected.clear(); render(); });
 
 // ---------- bank accounts ----------
 async function accountsPage() {
@@ -90,10 +138,10 @@ async function accountsPage() {
   $app.innerHTML = errHtml() + `
     <div class="row"><button id="import">Import now</button><span id="imported" class="muted"></span></div>
     <div class="card"><h2>Bank accounts</h2><table>
-      <tr><th>Account</th><th>Bank</th><th class="num">Unassigned</th><th class="num">Balance</th></tr>
+      <tr><th>Account</th><th>Bank</th><th class="num">Unassigned</th><th class="num">Pending approval</th><th class="num">Balance</th></tr>
       ${d.accounts.map(a => `<tr><td><a href="#/accounts/${encodeURIComponent(a.id)}">${esc(a.name)}</a></td><td>${esc(a.bank)}</td>
-        <td class="num">${a.unassigned}</td><td class="num ${cls(a.balance_cents)}">${fmt(a.balance_cents)}</td></tr>`).join('')}
-      <tr><th colspan="3">Total</th><th class="num ${cls(d.total_cents)}">${fmt(d.total_cents)}</th></tr>
+        <td class="num">${a.unassigned}</td><td class="num">${a.pending}</td><td class="num ${cls(a.balance_cents)}">${fmt(a.balance_cents)}</td></tr>`).join('')}
+      <tr><th colspan="4">Total</th><th class="num ${cls(d.total_cents)}">${fmt(d.total_cents)}</th></tr>
     </table></div>`;
   document.getElementById('import').onclick = async () => {
     try { const r = await api('ImportStatements'); await accountsPage(); document.getElementById('imported').textContent = r.imported + ' new transactions'; }
@@ -101,57 +149,221 @@ async function accountsPage() {
   };
 }
 
+// Groups in alphabetical order, and each group's budget accounts in alphabetical order.
+const byName = (a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
+const alphabetical = groups => [...groups].sort(byName).map(g => ({ ...g, accounts: [...g.accounts].sort(byName) }));
+
+// Newest first ('desc') unless the viewer reversed it. Remembered in this browser.
+function dateOrder() {
+  try { return localStorage.getItem('dateOrder') === 'asc' ? 'asc' : 'desc'; } catch (e) { return 'desc'; }
+}
+
 let selected = new Set();
 async function transactionsPage(account, q) {
-  const filter = q.get('filter') || 'all', search = q.get('search') || '';
+  const filter = q.get('filter') || 'unassigned', search = q.get('search') || '';
   const d = await api('GetTransactions', { account, filter, search });
+  const b = await api('GetBudget', {});
+  b.groups = alphabetical(b.groups); // every budget account list below is in this order
+  const order = dateOrder();
+  const txns = order === 'asc' ? [...d.transactions].reverse() : d.transactions;
+  // A name used in more than one group is shown with its group.
+  const nameCount = {};
+  b.groups.forEach(g => g.accounts.forEach(a => { const k = a.name.toLowerCase(); nameCount[k] = (nameCount[k] || 0) + 1; }));
+  const label = a => (nameCount[a.budget_account.toLowerCase()] > 1 && a.group ? `${a.budget_account} (${a.group})` : a.budget_account);
+  const note = notice;
+  notice = '';
   const base = '#/accounts/' + encodeURIComponent(account);
-  $app.innerHTML = errHtml() + `
-    <p><a href="#/accounts">&larr; Bank accounts</a></p>
+  $app.innerHTML = errHtml() + (note ? `<div class="banner">${esc(note)}</div>` : '') + `
     <h2 style="margin:0 0 4px">${esc(d.account.name)} <span class="${cls(d.account.balance_cents)}">${fmt(d.account.balance_cents)}</span></h2>
-    <p class="muted">${d.unassigned_count} unassigned, totalling ${fmt(d.unassigned_cents)}</p>
+    <p class="muted">${d.unassigned_count} unassigned, totalling ${fmt(d.unassigned_cents)}; ${d.pending_count} pending approval</p>
     ${d.failures.length ? `<div class="banner bad">${d.failures.length} statement row(s) could not be imported: ${d.failures.map(f => `${esc(f.file)} row ${f.row} (${esc(f.reason)})`).join(', ')}</div>` : ''}
     <div class="row">
-      ${['all', 'unassigned', 'assigned'].map(f => `<a href="${base}?filter=${f}&search=${encodeURIComponent(search)}"><button class="${f === filter ? 'primary' : ''}">${f[0].toUpperCase() + f.slice(1)}</button></a>`).join('')}
+      ${[['all', 'All'], ['unassigned', 'Unassigned'], ['pending', 'Pending approval'], ['assigned', 'Assigned']].map(([f, name]) => `<a href="${base}?filter=${f}&search=${encodeURIComponent(search)}"><button class="${f === filter ? 'primary' : ''}">${name}</button></a>`).join('')}
       <input id="search" placeholder="Search description" value="${esc(search)}">
     </div>
-    <div class="row" id="bulk"><input id="bulk-account" list="budget-accounts" placeholder="Budget account">
-      <button id="bulk-assign">Assign selected</button><button id="bulk-clear">Unassign selected</button>
-      <datalist id="budget-accounts"></datalist></div>
-    <div class="card"><table>
-      <tr><th></th><th>Date</th><th>Description</th><th>Assigned to</th><th class="num">Amount</th><th class="num">Balance</th><th></th></tr>
-      ${d.transactions.map(t => `<tr>
+    <div class="row" id="bulk">
+      <button id="bulk-assign">Assign selected</button><button id="bulk-clear">Unassign selected</button><button id="bulk-approve">Approve selected</button>
+      <span class="muted" id="bulk-count"></span>
+    </div>
+    <div class="card scroll"><table>
+      <tr><th><input type="checkbox" id="select-all" title="Tick or untick every transaction in this list"></th><th id="sort-date" class="sortable" title="Click to reverse the order">Date ${order === 'asc' ? '&#9650;' : '&#9660;'}</th><th>Description</th><th>Assigned to</th><th class="num">Amount</th><th class="num">Balance</th><th></th></tr>
+      ${txns.map(t => `<tr>
         <td><input type="checkbox" data-id="${esc(t.id)}" ${selected.has(t.id) ? 'checked' : ''}></td>
-        <td>${dmy(t.date)}</td><td>${esc(t.description)}</td>
-        <td>${t.status === 'transfer' ? `<span class="tag">Transfer: ${esc(t.link?.account)}</span>` :
-              t.assignments.map(a => `<span class="tag">${esc(a.budget_account)} ${t.assignments.length > 1 ? fmt(a.cents) : ''}</span>`).join('') || '<span class="muted">Unassigned</span>'}</td>
+        <td>${dmy(t.date)}</td><td class="desc" data-rule="${esc(t.id)}" title="Click to make an auto assign rule from this description">${esc(t.description)}</td>
+        <td ${t.status === 'transfer' ? '' : `class="assign" title="Click to assign" data-assign="${esc(t.id)}"`}>${t.status === 'transfer' ? `<span class="tag">Transfer: ${esc(t.link?.account)}</span>` :
+              t.assignments.map(a => `<span class="tag">${esc(label(a))} ${t.assignments.length > 1 ? fmt(a.cents) : ''}</span>`).join('') || '<span class="muted">Unassigned</span>'}${t.pending ? ' <span class="tag pending" title="Assigned by an auto assign rule. Tick it and choose Approve selected.">Pending approval</span>' : ''}</td>
         <td class="num ${cls(t.cents)}">${fmt(t.cents)}</td><td class="num">${fmt(t.balance_cents)}</td>
         <td class="num"><button data-split="${esc(t.id)}">Split</button> <button data-transfer="${esc(t.id)}" data-linked="${t.link ? 1 : ''}">${t.link ? 'Unlink' : 'Transfer'}</button></td></tr>`).join('')
         || '<tr><td colspan="7" class="muted">No transactions</td></tr>'}
     </table></div><div id="dialog"></div>`;
-  const b = await api('GetBudget', {});
-  document.getElementById('budget-accounts').innerHTML =
-    [{ name: 'Income' }, ...b.groups.flatMap(g => g.accounts)].map(a => `<option value="${esc(a.name)}">`).join('');
+  $app.querySelectorAll('td[data-rule]').forEach(td => td.onclick = () =>
+    ruleDialog(d.transactions.find(t => t.id === td.dataset.rule), b.groups));
+  document.getElementById('sort-date').onclick = () => {
+    try { localStorage.setItem('dateOrder', order === 'asc' ? 'desc' : 'asc'); } catch (e) { /* storage unavailable: order is not remembered */ }
+    render();
+  };
+  $app.querySelectorAll('td[data-assign]').forEach(td => td.onclick = () => {
+    if (td.querySelector('select')) return;
+    const t = d.transactions.find(x => x.id === td.dataset.assign);
+    if (t.assignments.length > 1) return splitDialog(t, b.groups);
+    const cur = t.assignments[0]?.budget_account_id || '';
+    const groups = b.groups.filter(g => g.accounts.length).map(g =>
+      `<optgroup label="${esc(g.name)}">${g.accounts.map(a => `<option value="${esc(a.id)}" ${a.id === cur ? 'selected' : ''}>${esc(a.name)}</option>`).join('')}</optgroup>`).join('');
+    const sel = document.createElement('select');
+    sel.innerHTML = `<option value="">Unassigned</option><option value="income" ${cur === 'income' ? 'selected' : ''}>Income</option>${groups}<option value="__new">+ New budget account…</option>`;
+    td.textContent = '';
+    td.appendChild(sel);
+    sel.focus();
+    try { sel.showPicker(); } catch (e) { /* not supported: the list opens on click */ }
+    sel.onchange = () => {
+      const name = sel.value;
+      if (name === '__new') { sel.onblur = null; return newAccountDialog(b.groups, [t.id]); }
+      act(() => api('AssignTransactions', name ? { transactions: [t.id], budget_account: name } : { transactions: [t.id] }));
+    };
+    sel.onblur = () => render();
+  });
   document.getElementById('search').onchange = e => goto(`${base}?filter=${filter}&search=${encodeURIComponent(e.target.value)}`);
-  $app.querySelectorAll('input[type=checkbox]').forEach(c => c.onchange = () => c.checked ? selected.add(c.dataset.id) : selected.delete(c.dataset.id));
-  document.getElementById('bulk-assign').onclick = () => act(async () => {
-    await api('AssignTransactions', { transactions: [...selected], budget_account: document.getElementById('bulk-account').value }); selected.clear(); });
-  document.getElementById('bulk-clear').onclick = () => act(async () => { await api('AssignTransactions', { transactions: [...selected] }); selected.clear(); });
-  $app.querySelectorAll('[data-split]').forEach(btn => btn.onclick = () => splitDialog(d.transactions.find(t => t.id === btn.dataset.split)));
+  const rowBoxes = [...$app.querySelectorAll('input[type=checkbox][data-id]')];
+  rowBoxes.forEach(c => c.onchange = () => c.checked ? selected.add(c.dataset.id) : selected.delete(c.dataset.id));
+  const countEl = document.getElementById('bulk-count');
+  const showCount = () => { countEl.textContent = selected.size ? `${selected.size} selected` : 'Tick transactions to assign them together'; };
+  showCount();
+  // Select all ticks every transaction in the list as filtered and searched, not ones hidden by them.
+  const selectAll = document.getElementById('select-all');
+  const syncSelectAll = () => {
+    const n = rowBoxes.filter(c => c.checked).length;
+    selectAll.disabled = !rowBoxes.length;
+    selectAll.checked = n > 0 && n === rowBoxes.length;
+    selectAll.indeterminate = n > 0 && n < rowBoxes.length;
+  };
+  selectAll.onchange = () => {
+    rowBoxes.forEach(c => { c.checked = selectAll.checked; selectAll.checked ? selected.add(c.dataset.id) : selected.delete(c.dataset.id); });
+    showCount();
+  };
+  rowBoxes.forEach(c => c.addEventListener('change', () => { showCount(); syncSelectAll(); }));
+  syncSelectAll();
+  document.getElementById('bulk-assign').onclick = () => {
+    if (!selected.size) { error = 'Tick the transactions to assign first'; return render(); }
+    assignDialog(b.groups, [...selected]);
+  };
+  document.getElementById('bulk-approve').onclick = () => {
+    if (!selected.size) { error = 'Tick the transactions to approve first'; return render(); }
+    act(async () => { await api('ApproveTransactions', { transactions: [...selected] }); selected.clear(); });
+  };
+  document.getElementById('bulk-clear').onclick = () => {
+    if (!selected.size) { error = 'Tick the transactions to unassign first'; return render(); }
+    act(async () => { await api('AssignTransactions', { transactions: [...selected] }); selected.clear(); });
+  };
+  $app.querySelectorAll('[data-split]').forEach(btn => btn.onclick = () => splitDialog(d.transactions.find(t => t.id === btn.dataset.split), b.groups));
   $app.querySelectorAll('[data-transfer]').forEach(btn => btn.onclick = () => btn.dataset.linked
     ? act(() => api('UnlinkTransfer', { transaction: btn.dataset.transfer }))
     : transferDialog(d.transactions.find(t => t.id === btn.dataset.transfer)));
 }
 
-function splitDialog(t) {
-  const rows = t.assignments.length ? t.assignments : [{ budget_account: '', cents: t.cents }];
+// Creates a budget account (optionally in a new group) and assigns the transaction to it.
+// Asks which budget account to assign the ticked transactions to. The selection stays ticked
+// until the assignment is made.
+function assignDialog(groups, ids) {
+  const dlg = document.createElement('dialog');
+  const options = groups.filter(g => g.accounts.length).map(g =>
+    `<optgroup label="${esc(g.name)}">${g.accounts.map(a => `<option value="${esc(a.id)}">${esc(a.name)}</option>`).join('')}</optgroup>`).join('');
+  dlg.innerHTML = `<div class="dlg"><h2>Assign ${ids.length} transaction${ids.length === 1 ? '' : 's'}</h2>
+    <label>Budget account<select id="as-account"><option value="income">Income</option>${options}<option value="__new">+ New budget account…</option></select></label>
+    <p class="error" id="as-error"></p>
+    <div class="row"><button class="primary" id="as-assign">Assign</button><button id="as-cancel">Cancel</button></div></div>`;
+  document.body.appendChild(dlg);
+  const $ = id => dlg.querySelector('#' + id);
+  let next = null;
+  $('as-cancel').onclick = () => dlg.close();
+  dlg.addEventListener('close', () => { dlg.remove(); if (next) next(); else render(); });
+  $('as-assign').onclick = async () => {
+    const name = $('as-account').value;
+    if (name === '__new') { next = () => newAccountDialog(groups, ids, () => selected.clear()); return dlg.close(); }
+    try {
+      await api('AssignTransactions', { transactions: ids, budget_account: name });
+      selected.clear();
+      dlg.close();
+    } catch (e) { $('as-error').textContent = e.message; }
+  };
+  dlg.showModal();
+  $('as-account').focus();
+}
+
+// With `mode` ({ onCreated(name), onCancel() }) it only creates the budget account and hands back its
+// name, leaving the page as it is. Without it, it also assigns the transactions and refreshes the page.
+function newAccountDialog(groups, transactionIds, onDone, mode) {
+  let created = false;
+  const dlg = document.createElement('dialog');
+  dlg.innerHTML = `<div class="dlg"><h2>New budget account</h2>
+    <label>Group<select id="na-group">${alphabetical(groups).map(g => `<option value="${esc(g.id)}">${esc(g.name)}</option>`).join('')}
+      <option value="__group">+ Add group…</option></select></label>
+    <label id="na-group-name-row" hidden>New group name<input id="na-group-name"></label>
+    <label>Budget account name<input id="na-name"></label>
+    <p class="error" id="na-error"></p>
+    <div class="row"><button class="primary" id="na-create">${mode ? 'Create' : 'Create and assign'}</button><button id="na-cancel">Cancel</button></div></div>`;
+  document.body.appendChild(dlg);
+  const $ = id => dlg.querySelector('#' + id);
+  $('na-group').value = 'ungrouped';
+  $('na-group').onchange = () => {
+    $('na-group-name-row').hidden = $('na-group').value !== '__group';
+    if (!$('na-group-name-row').hidden) $('na-group-name').focus();
+  };
+  $('na-cancel').onclick = () => dlg.close();
+  dlg.addEventListener('close', () => { dlg.remove(); if (!mode) render(); else if (!created) mode.onCancel(); });
+  $('na-create').onclick = async () => {
+    try {
+      const name = $('na-name').value.trim();
+      if (!name) throw new Error('Enter a budget account name');
+      let group = $('na-group').value;
+      if (group === '__group') {
+        const groupName = $('na-group-name').value.trim();
+        if (!groupName) throw new Error('Enter a group name');
+        group = (await api('AddGroup', { name: groupName })).id;
+      }
+      const made = await api('CreateBudgetAccount', { name, group });
+      if (mode) {
+        created = true;
+        mode.onCreated({ id: made.id, name });
+      } else {
+        await api('AssignTransactions', { transactions: transactionIds, budget_account: made.id });
+        if (onDone) onDone();
+      }
+      dlg.close();
+    } catch (e) { $('na-error').textContent = e.message; }
+  };
+  dlg.showModal();
+  $('na-name').focus();
+}
+
+// Splits a transaction across budget accounts. Each row picks its account from the same list as assigning.
+function splitDialog(t, groups) {
+  const rows = t.assignments.length ? t.assignments.map(a => ({ budget_account: a.budget_account_id, cents: a.cents })) : [{ budget_account: '', cents: t.cents }];
   const el = document.getElementById('dialog');
+  const created = []; // { id, name } of accounts made from this editor, which the page does not know about yet
+  const options = selected => {
+    const opt = (id, name) => `<option value="${esc(id)}" ${id === selected ? 'selected' : ''}>${esc(name)}</option>`;
+    return `<option value="">Choose…</option>${opt('income', 'Income')}`
+      + groups.filter(g => g.accounts.length).map(g => `<optgroup label="${esc(g.name)}">${g.accounts.map(a => opt(a.id, a.name)).join('')}</optgroup>`).join('')
+      + (created.length ? `<optgroup label="New">${created.map(a => opt(a.id, a.name)).join('')}</optgroup>` : '')
+      + '<option value="__new">+ New budget account…</option>';
+  };
   const draw = list => {
     el.innerHTML = `<div class="card"><h2>Assign ${esc(t.description)} (${fmt(t.cents)})</h2><table>
-      ${list.map((r, i) => `<tr><td><input data-n="${i}" list="budget-accounts" value="${esc(r.budget_account)}" placeholder="Budget account"></td>
+      ${list.map((r, i) => `<tr><td><select data-n="${i}">${options(r.budget_account)}</select></td>
         <td class="num"><input class="amt" data-a="${i}" value="${dollars(r.cents)}"></td></tr>`).join('')}
       <tr><td><button id="add-split">Add split</button></td><td class="num"><button class="primary" id="save-split">Save</button> <button id="cancel-split">Cancel</button></td></tr></table></div>`;
-    const read = () => list.map((_, i) => ({ budget_account: el.querySelector(`[data-n="${i}"]`).value.trim(), cents: toCents(el.querySelector(`[data-a="${i}"]`).value) }));
+    const read = () => list.map((_, i) => {
+      const account = el.querySelector(`[data-n="${i}"]`).value;
+      return { budget_account: account === '__new' ? '' : account, cents: toCents(el.querySelector(`[data-a="${i}"]`).value) };
+    });
+    list.forEach((_, i) => el.querySelector(`[data-n="${i}"]`).onchange = ev => {
+      if (ev.target.value !== '__new') return;
+      const current = read();
+      newAccountDialog(groups, null, null, {
+        onCreated: account => { created.push(account); current[i].budget_account = account.id; draw(current); },
+        onCancel: () => { current[i].budget_account = list[i].budget_account; draw(current); },
+      });
+    });
     document.getElementById('add-split').onclick = () => draw([...read(), { budget_account: '', cents: 0 }]);
     document.getElementById('cancel-split').onclick = () => { el.innerHTML = ''; };
     document.getElementById('save-split').onclick = () => act(() => api('AssignTransactions', { transactions: [t.id], splits: read().filter(s => s.budget_account) }));
@@ -170,12 +382,106 @@ async function transferDialog(t) {
   el.scrollIntoView();
 }
 
+// Makes an auto assign rule from a transaction's description, which can be edited first.
+function ruleDialog(t, groups) {
+  const dlg = document.createElement('dialog');
+  const preset = t.assignments.length === 1 ? t.assignments[0].budget_account_id : '';
+  const options = `<option value="">Choose budget account…</option><option value="income" ${preset === 'income' ? 'selected' : ''}>Income</option>`
+    + alphabetical(groups).filter(g => g.accounts.length).map(g => `<optgroup label="${esc(g.name)}">${g.accounts.map(a =>
+      `<option value="${esc(a.id)}" ${a.id === preset ? 'selected' : ''}>${esc(a.name)}</option>`).join('')}</optgroup>`).join('')
+    + '<option value="__new">+ New budget account…</option>';
+  dlg.innerHTML = `<div class="dlg"><h2>New auto assign rule</h2>
+    <label>Phrase<input id="ru-phrase" value="${esc(t.description)}"></label>
+    <p class="muted" style="margin:-6px 0 12px">Matching ignores case and finds the phrase anywhere in a description.</p>
+    <label>Assign to<select id="ru-account">${options}</select></label>
+    <p class="error" id="ru-error"></p>
+    <div class="row"><button class="primary" id="ru-create">Create rule</button><button id="ru-cancel">Cancel</button></div></div>`;
+  document.body.appendChild(dlg);
+  const $ = id => dlg.querySelector('#' + id);
+  $('ru-cancel').onclick = () => dlg.close();
+  dlg.addEventListener('close', () => { dlg.remove(); render(); });
+  $('ru-account').onchange = () => {
+    if ($('ru-account').value !== '__new') return;
+    $('ru-account').value = '';
+    newAccountDialog(groups, null, null, {
+      onCreated: made => {
+        const option = document.createElement('option');
+        option.value = made.id;
+        option.textContent = made.name;
+        $('ru-account').insertBefore(option, $('ru-account').lastElementChild);
+        $('ru-account').value = made.id;
+      },
+      onCancel: () => {},
+    });
+  };
+  $('ru-create').onclick = async () => {
+    try {
+      const phrase = $('ru-phrase').value.trim();
+      const result = await api('CreateAutoAssignRule', { phrase, budget_account: $('ru-account').value });
+      notice = `Rule "${phrase}" added. ${result.assigned} transaction${result.assigned === 1 ? '' : 's'} assigned, pending approval.`;
+      dlg.close();
+    } catch (e) { $('ru-error').textContent = e.message; }
+  };
+  dlg.showModal();
+  $('ru-phrase').focus();
+  $('ru-phrase').select();
+}
+
+// ---------- auto assign ----------
+let autoInfo = '';
+let notice = ''; // shown once, on the transactions page, after a rule is made there
+let ruleAccount = ''; // the budget account chosen for the rule being made, kept across a redraw
+
+async function autoAssignPage() {
+  const [r, b] = await Promise.all([api('ListAutoAssignRules'), api('GetBudget', {})]);
+  const groups = alphabetical(b.groups);
+  const nameCount = {};
+  groups.forEach(g => g.accounts.forEach(a => { const k = a.name.toLowerCase(); nameCount[k] = (nameCount[k] || 0) + 1; }));
+  const info = autoInfo;
+  autoInfo = '';
+  const options = `<option value="">Choose budget account…</option><option value="income" ${ruleAccount === 'income' ? 'selected' : ''}>Income</option>`
+    + groups.filter(g => g.accounts.length).map(g => `<optgroup label="${esc(g.name)}">${g.accounts.map(a =>
+      `<option value="${esc(a.id)}" ${a.id === ruleAccount ? 'selected' : ''}>${esc(a.name)}</option>`).join('')}</optgroup>`).join('')
+    + '<option value="__new">+ New budget account…</option>';
+  $app.innerHTML = errHtml() + (info ? `<div class="banner">${esc(info)}</div>` : '') + `
+    <h2 style="margin:0 0 4px">Auto assign</h2>
+    <p class="muted">When a bank transaction description contains a phrase, it is assigned to the budget account, and waits for your approval.
+      Matching ignores case. A new rule is applied to the transactions that are unassigned now, and to every transaction imported after it.</p>
+    <div class="row"><input id="rule-phrase" placeholder="Phrase in the description" size="30">
+      <select id="rule-account">${options}</select><button class="primary" id="rule-add">Add rule</button></div>
+    <div class="card"><table>
+      <tr><th>Phrase</th><th>Assign to</th><th></th></tr>
+      ${r.rules.map(x => `<tr><td>${esc(x.phrase)}</td>
+        <td>${esc(x.budget_account)}${x.group && nameCount[x.budget_account.toLowerCase()] > 1 ? ` (${esc(x.group)})` : ''}${x.closed ? ' <span class="muted">(closed)</span>' : ''}</td>
+        <td class="num"><button data-remove-rule="${esc(x.id)}">Remove</button></td></tr>`).join('')
+        || '<tr><td colspan="3" class="muted">No rules yet</td></tr>'}
+    </table></div>`;
+  const phrase = document.getElementById('rule-phrase');
+  const account = document.getElementById('rule-account');
+  account.onchange = () => {
+    ruleAccount = account.value;
+    if (account.value !== '__new') return;
+    ruleAccount = '';
+    newAccountDialog(groups, null, null, {
+      onCreated: made => { ruleAccount = made.id; render(); },
+      onCancel: () => render(),
+    });
+  };
+  document.getElementById('rule-add').onclick = () => act(async () => {
+    const result = await api('CreateAutoAssignRule', { phrase: phrase.value, budget_account: account.value });
+    ruleAccount = '';
+    autoInfo = `Rule added. ${result.assigned} existing transaction${result.assigned === 1 ? '' : 's'} assigned, pending approval.`;
+  });
+  $app.querySelectorAll('[data-remove-rule]').forEach(btn => btn.onclick = () => act(() => api('RemoveAutoAssignRule', { id: btn.dataset.removeRule })));
+}
+
 // ---------- budget ----------
 const shiftMonth = (m, by) => { const [y, mo] = m.split('-').map(Number); const i = y * 12 + mo - 1 + by; return `${Math.floor(i / 12)}-${String(i % 12 + 1).padStart(2, '0')}`; };
 const PERIODS = ['Yearly', 'Quarterly', 'Monthly', 'Fortnight', 'Weekly'];
 
 async function budgetPage(q) {
   const d = await api('GetBudget', { month: q.get('month') || undefined });
+  d.groups = alphabetical(d.groups);
   const link = m => `#/budget?month=${m}`;
   $app.innerHTML = errHtml() + `
     <div class="row"><a href="${link(shiftMonth(d.month, -1))}"><button>&larr;</button></a><strong>${d.month}</strong>

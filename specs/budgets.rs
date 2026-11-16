@@ -4,7 +4,7 @@ use crate::{cents, BudgetWorld};
 use cucumber::{given, then, when};
 use serde_json::{json, Value};
 
-fn budget(w: &mut BudgetWorld, month: &str) -> Value {
+pub fn budget(w: &mut BudgetWorld, month: &str) -> Value {
     w.ok("GetBudget", json!({ "month": month }))
 }
 
@@ -112,4 +112,30 @@ fn left_to_budget(w: &mut BudgetWorld, month: String, expected: String) {
 #[then(expr = "in {string} over budgeted is {string}")]
 fn over_budgeted(w: &mut BudgetWorld, month: String, expected: String) {
     assert_eq!(budget(w, &month)["over_budgeted_cents"].as_i64().unwrap(), cents(&expected));
+}
+
+/// The id of the budget account with this name in this group, from the budget screen.
+pub fn account_id(w: &mut BudgetWorld, name: &str, group: &str) -> String {
+    let b = budget(w, "2026-11");
+    let g = b["groups"].as_array().unwrap().iter().find(|g| g["name"] == group).expect("group");
+    g["accounts"].as_array().unwrap().iter().find(|a| a["name"] == name).unwrap_or_else(|| panic!("no {name} in {group}"))["id"]
+        .as_str()
+        .unwrap()
+        .to_string()
+}
+
+#[when(expr = "I move the budget account {string} in group {string} to group {string}")]
+fn move_from_group(w: &mut BudgetWorld, name: String, from: String, to: String) {
+    let id = account_id(w, &name, &from);
+    w.send("MoveBudgetAccount", json!({ "id": id, "group": to }));
+}
+
+#[then(expr = "in {string} budget account {string} in group {string} shows budgeted {string}, spent {string} and available {string}")]
+fn shows_in_group(w: &mut BudgetWorld, month: String, name: String, group: String, budgeted: String, spent: String, available: String) {
+    let b = budget(w, &month);
+    let g = b["groups"].as_array().unwrap().iter().find(|g| g["name"] == group.as_str()).expect("group");
+    let a = g["accounts"].as_array().unwrap().iter().find(|a| a["name"] == name.as_str()).unwrap_or_else(|| panic!("no {name} in {group}"));
+    assert_eq!(a["budgeted_cents"].as_i64().unwrap(), cents(&budgeted), "budgeted");
+    assert_eq!(a["spent_cents"].as_i64().unwrap(), cents(&spent), "spent");
+    assert_eq!(a["available_cents"].as_i64().unwrap(), cents(&available), "available");
 }
