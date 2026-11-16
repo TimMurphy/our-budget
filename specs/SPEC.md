@@ -11,10 +11,11 @@ Opening balances are as at close of business 30/10/2026 and are kept in [secrets
 ## Running
 
 - `cargo run` starts the application. It opens a native window titled "Our Budget", maximized to fill the screen (the title bar and taskbar stay visible, and the window can be restored to a smaller size), that shows the pages using the operating system's own web view. There is no web server, no port and no browser: the page talks to the application inside the same process, so nothing is reachable over the network.
+- Each request from the page is answered on its own thread, so the window stays responsive while an import is running. Requests still run one at a time, because they share the same data.
 - On Windows, if `cargo` cannot find the C++ build tools, run it as `./cargo.ps1 run` (or `./cargo.ps1 test --test specs`). The script finds a Visual Studio C++ toolset that has the headers and libraries, sets up the environment and then runs cargo.
 - `cargo test --test specs` runs every feature file in `specs/`. The steps drive the application through the mediator, against an in-memory event store and a temporary statements folder.
 - Opening balances are read from `data/secrets.md`, one line per bank account in the form `- <account name>: <amount>`, for example `- NAB - Home Loan: -123456.78`. A missing line means an opening balance of $0.00.
-- On start, if the database has no events at all, each bank account is registered and its opening balance is recorded as an event. The secrets file is not read again once the database has events, so changing it later has no effect. To start over, delete `data/databases/our-budget.db`.
+- On start every bank account is registered. An account's opening balance is recorded as an event the first time the secrets file has a balance for it, whether that is on the first start or on a later one, for example after the file is created or an account is added. Once an account has an opening balance event the secrets file is not read for that account again, so changing the file later has no effect on it. To start over, delete `data/databases/our-budget.db`.
 
 ## Building
 
@@ -47,7 +48,8 @@ Rules that apply everywhere:
 - Every state change is an event appended to the event store. Screens read from projections built from the events. Events are never updated or deleted.
 - The read models are tables in the database: `bank_accounts`, `transactions`, `assignments`, `import_failures`, `groups`, `budget_accounts` and `budgets`. Every query reads from them. They are updated by applying each event, in the same transaction that stores the event, so they are always up to date.
 - The tables are not rebuilt on every start. A `read_model_state` row records the last event applied. On start only the events stored after it are applied.
-- The tables are rebuilt from all the events only when there is no `read_model_state` row (a new database), it is from a different version of the program (`PROJECTION_VERSION` in `src/projection.rs` is bumped when the tables or what is written to them changes), or the stored events no longer match it, for example because events were deleted by hand.
+- The tables are rebuilt from all the events only when there is no `read_model_state` row (a new database), it is from a different version of the program (`PROJECTION_VERSION` in `src/projection.rs` must be bumped whenever the tables or what is written to them changes), or the stored events no longer match it. `read_model_state` records how many events the tables include and the sum of their positions, so events that were deleted, or replaced by others, behind the application's back are noticed even if the number of events is the same.
+- Events written by earlier versions keep working. For example an account event that still carries its opening balance in it gives that balance.
 - The application is for one household. There are no logins.
 - The page follows the computer's light or dark theme. In the dark theme, links are amber, not blue, so they stay readable.
 
@@ -80,6 +82,7 @@ Rules that apply everywhere:
 - A missing statement file is not an error. The account simply has nothing new.
 - Transactions are never edited or deleted by an import.
 - Only transactions dated on or after 1 Nov 2026 are imported. Earlier rows in a statement are ignored. Opening balances are as at close of business 30/10/2026, so earlier activity is already inside them.
+- The import reports how many rows it skipped for being before 1 Nov 2026, and the program prints it each time it imports, so nothing is dropped silently.
 - NAB statements have a header row. Columns include: date (`DD Mon YY`), amount (negative for debits), account number, blank, type, transaction details. Without a header row, that column order is assumed.
 - Statements are read from `data/back-accounts/`, one file per bank account, named in the Accounts section below.
 - Westpac statements have a header row. Columns include: bank account, date (`DD/MM/YYYY`), narrative, debit amount, credit amount. A debit is stored as a negative amount.

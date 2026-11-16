@@ -45,3 +45,15 @@ Feature: Read model tables
     And a stored event is deleted behind the application's back
     When the application is restarted
     Then the read model was rebuilt from the events
+
+  Scenario: Account events stored with an opening balance in them still give that balance
+    Given an account event in the old format with opening balance "$123.45" is stored
+    When the application is restarted
+    Then "Old account" has balance "$123.45"
+
+  Scenario: Events replaced behind the application's back are noticed even when the count is unchanged
+    Given a Westpac bank account "Joint" with opening balance "$500.00"
+    And a Westpac bank account "Other" with opening balance "$0.00"
+    And the first stored event is swapped for a copy of the next one
+    When the application is restarted
+    Then the read model was rebuilt from the events

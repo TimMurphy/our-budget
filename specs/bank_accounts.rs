@@ -141,3 +141,19 @@ fn assign_in_group(w: &mut BudgetWorld, description: String, account: String, bu
     let id = txn_id(w, &account, &description);
     w.send("AssignTransactions", json!({ "transactions": [id], "budget_account": account_id }));
 }
+
+#[then(expr = "the transfer candidates for {string} in {string} are {string}")]
+fn transfer_candidates(w: &mut BudgetWorld, description: String, account: String, expected: String) {
+    let id = txn_id(w, &account, &description);
+    let v = w.ok("GetTransferCandidates", json!({ "transaction": id }));
+    let found: Vec<&str> = v["candidates"].as_array().unwrap().iter().map(|c| c["description"].as_str().unwrap()).collect();
+    assert_eq!(found.join(", "), expected);
+}
+
+#[then(expr = "the bank account list shows {string} with {int} unassigned and {int} pending approval")]
+fn account_list_counts(w: &mut BudgetWorld, account: String, unassigned: u64, pending: u64) {
+    let v = w.ok("ListBankAccounts", json!({}));
+    let a = v["accounts"].as_array().unwrap().iter().find(|a| a["name"] == account.as_str()).expect("bank account");
+    assert_eq!(a["unassigned"].as_u64().unwrap(), unassigned, "unassigned");
+    assert_eq!(a["pending"].as_u64().unwrap(), pending, "pending approval");
+}

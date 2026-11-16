@@ -29,3 +29,19 @@ Feature: Opening balances
   Scenario: A missing secrets file means opening balances of zero
     When the household bank accounts are set up
     Then "NAB - Home Loan" has balance "$0.00"
+
+  Scenario: A secrets file added after the first start is applied once
+    When the household bank accounts are set up
+    Then "Westpac - Our Account" has balance "$0.00"
+    When the secrets file contains:
+      """
+      - Westpac - Our Account: 1200.00
+      """
+    And the household bank accounts are set up
+    Then "Westpac - Our Account" has balance "$1,200.00"
+    When the secrets file contains:
+      """
+      - Westpac - Our Account: 999.00
+      """
+    And the household bank accounts are set up
+    Then "Westpac - Our Account" has balance "$1,200.00"

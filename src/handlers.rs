@@ -19,6 +19,7 @@ pub const PERIODS: [&str; 5] = ["Yearly", "Quarterly", "Monthly", "Fortnight", "
 pub fn all() -> Vec<(&'static str, Handler)> {
     vec![
         ("RegisterBankAccount", register_bank_account),
+        ("SetOpeningBalance", set_opening_balance),
         ("ListBankAccounts", list_bank_accounts),
         ("ImportStatements", import_statements),
         ("GetTransactions", get_transactions),
@@ -78,7 +79,7 @@ fn register_bank_account(app: &mut App, v: &Value) -> Res {
     }
     let file = opt_text(v, "file").unwrap_or_else(|| format!("{id}.csv"));
     let opening_cents = v.get("opening_cents").and_then(|x| x.as_i64()).unwrap_or(0);
-    let mut events = vec![Event::BankAccountRegistered { id: id.clone(), name, bank, file }];
+    let mut events = vec![Event::BankAccountRegistered { id: id.clone(), name, bank, file, opening_cents: 0 }];
     if opening_cents != 0 {
         events.push(Event::OpeningBalanceSet { account: id.clone(), cents: opening_cents });
     }
@@ -86,16 +87,26 @@ fn register_bank_account(app: &mut App, v: &Value) -> Res {
     Ok(json!({ "id": id }))
 }
 
+/// Records a bank account's opening balance, once. Later changes need a new kind of event, not this.
+fn set_opening_balance(app: &mut App, v: &Value) -> Res {
+    let c = app.store.conn();
+    let account = read::bank_account(c, &text(v, "account")?)?.ok_or("no such bank account")?;
+    if read::opening_balance_set(c, &account.id)? {
+        return Err("the opening balance is already set".into());
+    }
+    app.record(vec![Event::OpeningBalanceSet { account: account.id, cents: int(v, "cents")? }])?;
+    ok()
+}
+
 fn list_bank_accounts(app: &mut App, _: &Value) -> Res {
     let c = app.store.conn();
-    let txns = read::all_txns(c)?;
+    let counts = read::account_counts(c)?;
     let mut total = 0;
     let mut accounts = vec![];
     for a in read::bank_accounts(c)? {
         let balance = read::balance(c, &a.id)?;
         total += balance;
-        let unassigned = txns.iter().filter(|t| t.account == a.id && !t.is_assigned()).count();
-        let pending = txns.iter().filter(|t| t.account == a.id && t.pending).count();
+        let (unassigned, pending) = counts.get(&a.id).copied().unwrap_or((0, 0));
         accounts.push(json!({ "id": a.id, "name": a.name, "bank": a.bank, "balance_cents": balance,
             "unassigned": unassigned, "pending": pending }));
     }
@@ -107,6 +118,7 @@ fn import_statements(app: &mut App, _: &Value) -> Res {
     let from = app.import_from.clone();
     let rules = read::auto_rules(app.store.conn())?;
     let mut auto_assigned = 0;
+    let mut skipped = 0;
     for acct in read::bank_accounts(app.store.conn())? {
         let Ok(content) = std::fs::read_to_string(app.statements_dir.join(&acct.file)) else {
             continue;
@@ -116,7 +128,7 @@ fn import_statements(app: &mut App, _: &Value) -> Res {
         let mut new_txns: Vec<(String, String, i64)> = vec![];
         for r in banks::parse(&acct.bank, &content) {
             match r {
-                Ok(row) if row.date.as_str() < from.as_str() => {}
+                Ok(row) if row.date.as_str() < from.as_str() => skipped += 1,
                 Ok(row) => {
                     let base = format!("{}|{}|{}|{}", acct.id, row.date, row.cents, row.description);
                     let n = seen.entry(base.clone()).or_insert(0);
@@ -147,7 +159,7 @@ fn import_statements(app: &mut App, _: &Value) -> Res {
         events.extend(auto);
         app.record(events)?;
     }
-    Ok(json!({ "imported": imported, "auto_assigned": auto_assigned }))
+    Ok(json!({ "imported": imported, "auto_assigned": auto_assigned, "skipped_before_import_from": skipped }))
 }
 
 fn txn_status(t: &read::Txn) -> &'static str {
@@ -304,31 +316,36 @@ fn resolve_or_create(c: &Connection, name: &str, created: &mut HashMap<String, S
 
 // ---------- transfers ----------
 
+/// Why these two transactions cannot be linked as a transfer, if they cannot.
+fn pair_problem(x: &read::Txn, y: &read::Txn) -> Option<String> {
+    if x.account == y.account {
+        return Some("a transfer needs two different bank accounts".into());
+    }
+    if x.cents + y.cents != 0 || x.cents == 0 {
+        return Some("a transfer needs a matching debit and credit".into());
+    }
+    let (Some(dx), Some(dy)) = (day_number(&x.date), day_number(&y.date)) else {
+        return Some("transaction has an invalid date".into());
+    };
+    if (dx - dy).abs() > TRANSFER_DAYS {
+        return Some(format!("transfers must be within {TRANSFER_DAYS} days of each other"));
+    }
+    for t in [x, y] {
+        if t.link.is_some() {
+            return Some("transaction is already linked".into());
+        }
+        if !t.splits.is_empty() {
+            return Some("transaction is assigned; unassign it first".into());
+        }
+    }
+    None
+}
+
 fn transfer_problem(c: &Connection, a: &str, b: &str) -> Result<Option<String>, String> {
     let (Some(x), Some(y)) = (read::txn(c, a)?, read::txn(c, b)?) else {
         return Ok(Some("no such transaction".into()));
     };
-    if x.account == y.account {
-        return Ok(Some("a transfer needs two different bank accounts".into()));
-    }
-    if x.cents + y.cents != 0 || x.cents == 0 {
-        return Ok(Some("a transfer needs a matching debit and credit".into()));
-    }
-    let (Some(dx), Some(dy)) = (day_number(&x.date), day_number(&y.date)) else {
-        return Ok(Some("transaction has an invalid date".into()));
-    };
-    if (dx - dy).abs() > TRANSFER_DAYS {
-        return Ok(Some(format!("transfers must be within {TRANSFER_DAYS} days of each other")));
-    }
-    for t in [&x, &y] {
-        if t.link.is_some() {
-            return Ok(Some("transaction is already linked".into()));
-        }
-        if !t.splits.is_empty() {
-            return Ok(Some("transaction is assigned; unassign it first".into()));
-        }
-    }
-    Ok(None)
+    Ok(pair_problem(&x, &y))
 }
 
 fn link_transfer(app: &mut App, v: &Value) -> Res {
@@ -350,13 +367,15 @@ fn unlink_transfer(app: &mut App, v: &Value) -> Res {
 fn get_transfer_candidates(app: &mut App, v: &Value) -> Res {
     let id = text(v, "transaction")?;
     let c = app.store.conn();
-    let mut list = vec![];
-    for t in read::all_txns(c)? {
-        if t.id != id && transfer_problem(c, &id, &t.id)?.is_none() {
-            list.push(json!({ "id": t.id, "date": t.date, "description": t.description, "cents": t.cents,
-                "account": read::bank_account(c, &t.account)?.map(|a| a.name) }));
-        }
-    }
+    let me = read::txn(c, &id)?.ok_or("no such transaction")?;
+    let names: HashMap<String, String> = read::bank_accounts(c)?.into_iter().map(|a| (a.id, a.name)).collect();
+    // One pass over the transactions, compared in memory.
+    let list: Vec<Value> = read::all_txns(c)?
+        .iter()
+        .filter(|t| t.id != me.id && pair_problem(&me, t).is_none())
+        .map(|t| json!({ "id": t.id, "date": t.date, "description": t.description, "cents": t.cents,
+            "account": names.get(&t.account) }))
+        .collect();
     Ok(json!({ "candidates": list }))
 }
 
@@ -613,11 +632,7 @@ fn create_auto_assign_rule(app: &mut App, v: &Value) -> Res {
     if rules.iter().any(|r| r.phrase.to_lowercase() == phrase.to_lowercase()) {
         return Err("a rule for that phrase already exists".into());
     }
-    let mut n = rules.len() + 1;
-    while read::rule_id_used(c, &format!("rule-{n}"))? {
-        n += 1;
-    }
-    let rule = read::Rule { id: format!("rule-{n}"), phrase: phrase.clone(), account: account.id.clone() };
+    let rule = read::Rule { id: format!("rule-{}", read::rules_ever_created(c)? + 1), phrase: phrase.clone(), account: account.id.clone() };
 
     // The new rule applies to every transaction that is unassigned now. Older rules already had
     // their turn on those, so only this rule is tried.

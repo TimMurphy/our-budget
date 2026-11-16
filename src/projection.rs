@@ -67,10 +67,10 @@ pub fn reset(c: &Connection) -> Result<(), String> {
 
 pub fn apply(c: &Connection, e: &Event) -> Result<(), String> {
     match e {
-        Event::BankAccountRegistered { id, name, bank, file } => {
+        Event::BankAccountRegistered { id, name, bank, file, opening_cents } => {
             c.execute(
-                "INSERT INTO bank_accounts (id, name, bank, file, opening_cents) VALUES (?1, ?2, ?3, ?4, 0)",
-                params![id, name, bank, file],
+                "INSERT INTO bank_accounts (id, name, bank, file, opening_cents) VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![id, name, bank, file, opening_cents],
             )
         }
         Event::OpeningBalanceSet { account, cents } => {
@@ -122,6 +122,8 @@ pub fn apply(c: &Connection, e: &Event) -> Result<(), String> {
             Ok(0)
         }
         Event::TransferLinked { a, b } => {
+            // A linked transaction is never pending approval.
+            c.execute("UPDATE transactions SET pending = 0 WHERE id = ?1 OR id = ?2", params![a, b]).map_err(err)?;
             c.execute("UPDATE transactions SET link = ?2 WHERE id = ?1", params![a, b]).map_err(err)?;
             c.execute("UPDATE transactions SET link = ?2 WHERE id = ?1", params![b, a])
         }

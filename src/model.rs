@@ -15,7 +15,15 @@ pub struct Split {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum Event {
-    BankAccountRegistered { id: String, name: String, bank: String, file: String },
+    /// `opening_cents` is only read, from events stored before opening balances became their own event.
+    BankAccountRegistered {
+        id: String,
+        name: String,
+        bank: String,
+        file: String,
+        #[serde(default, skip_serializing)]
+        opening_cents: i64,
+    },
     OpeningBalanceSet { account: String, cents: i64 },
     TransactionImported { id: String, account: String, date: String, cents: i64, description: String },
     ImportRowFailed { account: String, file: String, row: usize, reason: String },

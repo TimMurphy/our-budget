@@ -65,7 +65,10 @@ fn run() -> Result<(), String> {
         std::thread::spawn(move || loop {
             if let Ok(mut a) = app.lock() {
                 match mediator.send(&mut a, "ImportStatements", &json!({})) {
-                    Ok(r) => println!("import: {} new transactions", r["imported"]),
+                    Ok(r) => println!(
+                        "import: {} new transactions, {} assigned by rules, {} rows before {IMPORT_FROM} skipped",
+                        r["imported"], r["auto_assigned"], r["skipped_before_import_from"]
+                    ),
                     Err(e) => eprintln!("import failed: {e}"),
                 }
             }
@@ -83,7 +86,11 @@ fn run() -> Result<(), String> {
 
     let mut context = WebContext::new(Some(data.join("webview")));
     let builder = WebViewBuilder::new_with_web_context(&mut context)
-        .with_custom_protocol("app".into(), move |_id, request| respond(&app, &mediator, request).map(Into::into))
+        // Each request is answered on its own thread, so a long import never freezes the window.
+        .with_asynchronous_custom_protocol("app".into(), move |_id, request, responder| {
+            let (app, mediator) = (app.clone(), mediator.clone());
+            std::thread::spawn(move || responder.respond(respond(&app, &mediator, request)));
+        })
         .with_url("app://localhost");
 
     #[cfg(any(target_os = "windows", target_os = "macos"))]

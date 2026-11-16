@@ -270,14 +270,37 @@ pub fn account_name(c: &Connection, id: &str) -> R<String> {
 // ---------- auto assign rules ----------
 
 /// In the order they were made. The first rule that matches a transaction wins.
-/// True if a rule with this id has ever been made, even if it was removed since.
-pub fn rule_id_used(c: &Connection, id: &str) -> R<bool> {
+/// How many rules have ever been made, including removed ones. Events are never deleted, so this only
+/// grows, which makes `rule-{n}` a unique id.
+pub fn rules_ever_created(c: &Connection) -> R<i64> {
+    c.query_row("SELECT COUNT(*) FROM events WHERE type = 'AutoAssignRuleCreated'", [], |r| r.get(0)).map_err(err)
+}
+
+/// Whether an opening balance has been recorded for the bank account.
+pub fn opening_balance_set(c: &Connection, account: &str) -> R<bool> {
     c.query_row(
-        "SELECT EXISTS (SELECT 1 FROM events WHERE type = 'AutoAssignRuleCreated' AND json_extract(data, '$.id') = ?1)",
-        params![id],
+        "SELECT EXISTS (SELECT 1 FROM events WHERE type = 'OpeningBalanceSet' AND json_extract(data, '$.account') = ?1)",
+        params![account],
         |r| r.get(0),
     )
     .map_err(err)
+}
+
+/// (unassigned, pending approval) transaction counts for each bank account, counted in SQL.
+pub fn account_counts(c: &Connection) -> R<HashMap<String, (i64, i64)>> {
+    let mut s = c
+        .prepare(
+            "SELECT t.account,
+                    SUM(CASE WHEN t.link IS NULL AND NOT (
+                            EXISTS (SELECT 1 FROM assignments a WHERE a.transaction_id = t.id)
+                            AND (SELECT SUM(a.cents) FROM assignments a WHERE a.transaction_id = t.id) = t.cents
+                        ) THEN 1 ELSE 0 END),
+                    SUM(t.pending)
+             FROM transactions t GROUP BY t.account",
+        )
+        .map_err(err)?;
+    let rows = s.query_map([], |r| Ok((r.get::<_, String>(0)?, (r.get::<_, i64>(1)?, r.get::<_, i64>(2)?)))).map_err(err)?;
+    rows.collect::<Result<_, _>>().map_err(err)
 }
 
 pub fn auto_rules(c: &Connection) -> R<Vec<Rule>> {

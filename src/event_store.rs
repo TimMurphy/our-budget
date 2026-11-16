@@ -39,11 +39,22 @@ impl EventStore {
                 id INTEGER PRIMARY KEY CHECK (id = 1),
                 version INTEGER NOT NULL,
                 last_seq INTEGER NOT NULL,
-                event_count INTEGER NOT NULL
+                event_count INTEGER NOT NULL,
+                seq_sum INTEGER NOT NULL DEFAULT -1
             );
+            CREATE INDEX IF NOT EXISTS events_type ON events (type);
             DROP TABLE IF EXISTS read_model;",
         )
         .map_err(err)?;
+        // Databases from before the sum was kept get the column, and are rebuilt once because it does not match.
+        let has_sum = conn
+            .prepare("SELECT 1 FROM pragma_table_info('read_model_state') WHERE name = 'seq_sum'")
+            .map_err(err)?
+            .exists([])
+            .map_err(err)?;
+        if !has_sum {
+            conn.execute("ALTER TABLE read_model_state ADD COLUMN seq_sum INTEGER NOT NULL DEFAULT -1", []).map_err(err)?;
+        }
         projection::create(&conn)?;
         Ok(EventStore { conn })
     }
@@ -89,20 +100,22 @@ impl EventStore {
     /// record of them, they are from a different projection version, or the stored events no longer
     /// match them (for example events were deleted). Returns (events applied, rebuilt).
     pub fn catch_up(&mut self) -> Result<(usize, bool), String> {
-        let state: Option<(u32, i64, i64)> = self
+        let state: Option<(u32, i64, i64, i64)> = self
             .conn
-            .query_row("SELECT version, last_seq, event_count FROM read_model_state WHERE id = 1", [], |r| {
-                Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+            .query_row("SELECT version, last_seq, event_count, seq_sum FROM read_model_state WHERE id = 1", [], |r| {
+                Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
             })
             .optional()
             .map_err(err)?;
         let mut resume_after = None;
-        if let Some((version, last_seq, event_count)) = state {
-            let stored: i64 = self
+        if let Some((version, last_seq, event_count, seq_sum)) = state {
+            // The count and the sum of positions both have to match, so events that were deleted, or
+            // replaced by others, behind the application's back are noticed.
+            let (stored, stored_sum): (i64, i64) = self
                 .conn
-                .query_row("SELECT COUNT(*) FROM events WHERE seq <= ?1", params![last_seq], |r| r.get(0))
+                .query_row("SELECT COUNT(*), COALESCE(SUM(seq), 0) FROM events WHERE seq <= ?1", params![last_seq], |r| Ok((r.get(0)?, r.get(1)?)))
                 .map_err(err)?;
-            if version == PROJECTION_VERSION && stored == event_count {
+            if version == PROJECTION_VERSION && stored == event_count && stored_sum == seq_sum {
                 resume_after = Some(last_seq);
             }
         }
@@ -145,13 +158,15 @@ impl EventStore {
 
 /// Records that the read model tables include every stored event.
 fn save_state(tx: &Connection) -> Result<(), String> {
-    let (last_seq, count): (i64, i64) = tx
-        .query_row("SELECT COALESCE(MAX(seq), 0), COUNT(*) FROM events", [], |r| Ok((r.get(0)?, r.get(1)?)))
+    let (last_seq, count, seq_sum): (i64, i64, i64) = tx
+        .query_row("SELECT COALESCE(MAX(seq), 0), COUNT(*), COALESCE(SUM(seq), 0) FROM events", [], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+        })
         .map_err(err)?;
     tx.execute(
-        "INSERT INTO read_model_state (id, version, last_seq, event_count) VALUES (1, ?1, ?2, ?3)
-         ON CONFLICT(id) DO UPDATE SET version = ?1, last_seq = ?2, event_count = ?3",
-        params![PROJECTION_VERSION, last_seq, count],
+        "INSERT INTO read_model_state (id, version, last_seq, event_count, seq_sum) VALUES (1, ?1, ?2, ?3, ?4)
+         ON CONFLICT(id) DO UPDATE SET version = ?1, last_seq = ?2, event_count = ?3, seq_sum = ?4",
+        params![PROJECTION_VERSION, last_seq, count, seq_sum],
     )
     .map_err(err)?;
     Ok(())

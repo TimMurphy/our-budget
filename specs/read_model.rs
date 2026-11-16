@@ -61,3 +61,22 @@ fn table_rows(w: &mut BudgetWorld, table: String, n: i64) {
     let count: i64 = c.query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |r| r.get(0)).unwrap();
     assert_eq!(count, n, "rows in {table}");
 }
+
+#[given(expr = "an account event in the old format with opening balance {string} is stored")]
+fn old_format_event(w: &mut BudgetWorld, amount: String) {
+    let cents = crate::cents(&amount);
+    let data = format!(
+        r#"{{"type":"BankAccountRegistered","id":"old-account","name":"Old account","bank":"NAB","file":"old.csv","opening_cents":{cents}}}"#
+    );
+    let c = rusqlite::Connection::open(db_path(w)).unwrap();
+    c.execute("INSERT INTO events (type, data, at) VALUES ('BankAccountRegistered', ?1, 0)", [data]).unwrap();
+}
+
+#[given(expr = "the first stored event is swapped for a copy of the next one")]
+fn swap_event(w: &mut BudgetWorld) {
+    let c = rusqlite::Connection::open(db_path(w)).unwrap();
+    c.execute("DELETE FROM events WHERE seq = (SELECT MIN(seq) FROM events)", []).unwrap();
+    // Same number of events at or before the last one the read model saw, but different positions.
+    c.execute("INSERT INTO events (seq, type, data, at) SELECT 0, type, data, at FROM events WHERE seq = (SELECT MIN(seq) FROM events)", [])
+        .unwrap();
+}

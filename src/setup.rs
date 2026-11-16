@@ -24,11 +24,20 @@ fn opening_balance(secrets: &str, name: &str) -> i64 {
 }
 
 pub fn register_accounts(app: &mut App, mediator: &Mediator, secrets_path: &Path) -> Result<(), String> {
-    // Opening balances are recorded only into an empty database. After that the events are the truth.
-    let secrets = if app.store.is_empty()? { std::fs::read_to_string(secrets_path).unwrap_or_default() } else { String::new() };
+    let secrets = std::fs::read_to_string(secrets_path).unwrap_or_default();
     for (name, bank, file) in ACCOUNTS {
-        let body = json!({ "name": name, "bank": bank, "file": file, "opening_cents": opening_balance(&secrets, name) });
+        let body = json!({ "name": name, "bank": bank, "file": file });
         mediator.send(app, "RegisterBankAccount", &body)?;
+        // An account's opening balance is recorded once, the first time the secrets file has one for it.
+        // After that the events are the truth, and the file is not read for that account again.
+        let cents = opening_balance(&secrets, name);
+        if cents != 0 {
+            match mediator.send(app, "SetOpeningBalance", &json!({ "account": name, "cents": cents })) {
+                Ok(_) => {}
+                Err(e) if e.contains("already set") => {}
+                Err(e) => return Err(e),
+            }
+        }
     }
     Ok(())
 }

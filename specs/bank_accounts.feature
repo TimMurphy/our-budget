@@ -204,3 +204,27 @@ Feature: Bank accounts
     Then "Joint" has 2 transactions
     And "Joint" filtered by "all" lists "Later, First day"
     And "Joint" has balance "$930.00"
+
+  Scenario: Transfer candidates are the matching transactions in other bank accounts
+    Given the "Joint" statement contains:
+      | date       | amount  | description |
+      | 2026-11-03 | -500.00 | To loan     |
+    And the "Loan" statement contains:
+      | date       | amount | description |
+      | 2026-11-04 | 500.00 | From joint  |
+      | 2026-11-04 | 400.00 | Wrong sum   |
+      | 2026-11-30 | 500.00 | Too late    |
+    And the statements have been imported
+    Then the transfer candidates for "To loan" in "Joint" are "From joint"
+
+  Scenario: The bank account list counts unassigned and pending approval transactions
+    Given the "Joint" statement contains:
+      | date       | amount | description  |
+      | 2026-11-02 | -50.00 | Woolworths A |
+      | 2026-11-03 | -20.00 | Bakery       |
+      | 2026-11-04 | -10.00 | Library      |
+    And the statements have been imported
+    And I assign "Library" in "Joint" to "Treats"
+    And I create budget account "Groceries"
+    And I add an auto assign rule "woolworths" for "Groceries"
+    Then the bank account list shows "Joint" with 1 unassigned and 1 pending approval
