@@ -97,6 +97,7 @@ Rules that apply everywhere:
 ### Assigning transactions
 
 - A transaction can be assigned to one budget account, or split across several.
+- In the split editor each row chooses its budget account from the same drop-down as assigning: Income, then the accounts grouped by group, then "+ New budget account…". That opens the same new-budget-account dialog, which here only creates the account (it does not assign anything) and then selects it in that row. Cancelling the dialog puts the row back as it was. Each row also has an amount, and the amounts must add up to the transaction amount.
 - The assigned amounts must add up exactly to the transaction amount. A split cannot be saved otherwise.
 - A transaction with its full amount assigned is Assigned. A transaction with nothing or only part assigned is Unassigned.
 - An assignment can be changed or removed at any time. Both changes are new events. The earlier assignment stays in the history.
