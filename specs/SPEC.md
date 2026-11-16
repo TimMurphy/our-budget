@@ -87,6 +87,7 @@ Rules that apply everywhere:
 - Shows date, description, amount and the budget accounts it is assigned to, newest first.
 - Clicking the "Assigned to" cell of a transaction opens a drop-down list of budget accounts, grouped by group, with Income, Unassigned and "New budget account…". Choosing one assigns the whole transaction to it. "New budget account…" opens a dialog with a Group drop-down (the existing groups, Ungrouped by default, plus "Add group…" which reveals a new group name field) and a budget account name field. Create makes the group if needed, then the budget account, and assigns the transaction to it. An error such as a duplicate name is shown in the dialog. Unassigned removes the assignment. A split transaction opens the split editor instead, and a transfer cannot be changed here.
 - Shows the running balance for the bank account.
+- The list of transactions scrolls inside its own area. The account heading, the unassigned count, the filters and the column headings stay in view while the rows scroll.
 - Clicking the Date column heading reverses the order, between newest first (the default) and oldest first. An arrow shows the current order. The choice is remembered in the browser and used for every bank account the next time the page is opened. The running balance stays with its transaction.
 - Filters: All transactions, Unassigned, Assigned. The selected filter is shown in the page address so it survives a refresh.
 - Shows how many transactions are unassigned and their total.

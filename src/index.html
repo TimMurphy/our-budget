@@ -6,11 +6,13 @@
 <title>Our Budget</title>
 <style>
   :root { --bg:#f6f7f9; --card:#fff; --text:#1c2430; --muted:#667085; --line:#e4e7ec; --accent:#2457d6; --bad:#c0262d; --good:#157f3c; }
-  :root { --link:#2457d6; }
+  :root { --link:#2457d6; color-scheme: light dark; }
   @media (prefers-color-scheme: dark) { :root { --bg:#12161c; --card:#1b212b; --text:#e8ecf2; --muted:#98a2b3; --line:#2b3340; --accent:#6c93ff; --link:#f5c451; --bad:#ff6b72; --good:#4cc57c; } }
   * { box-sizing: border-box; }
   a { color:var(--link); }
-  body { margin:0; font:15px/1.4 system-ui, sans-serif; background:var(--bg); color:var(--text); }
+  html, body { height:100%; }
+  body { margin:0; font:15px/1.4 system-ui, sans-serif; background:var(--bg); color:var(--text); display:flex; flex-direction:column; }
+  header { flex:none; }
   header { display:flex; gap:16px; align-items:center; padding:12px 16px; background:var(--card); border-bottom:1px solid var(--line); flex-wrap:wrap; }
   header a { color:var(--muted); text-decoration:none; font-weight:600; }
   header a.on { color:var(--link); }
@@ -20,7 +22,11 @@
   .menu a { display:block; padding:7px 12px; white-space:nowrap; color:var(--link); }
   .menu a:hover { background:var(--bg); }
   header h1 { font-size:17px; margin:0 12px 0 0; }
-  main { max-width:960px; margin:0 auto; padding:16px; }
+  main { width:100%; max-width:960px; margin:0 auto; padding:16px; flex:1; min-height:0; overflow:auto; }
+  /* The transactions page: the heading and filters stay put and only the list scrolls. */
+  main.fill { display:flex; flex-direction:column; overflow:auto; }
+  main.fill > .scroll { flex:1; min-height:280px; overflow:auto; margin-bottom:0; }
+  .scroll th { position:sticky; top:0; z-index:1; background:var(--card); box-shadow:0 1px 0 var(--line); }
   .card { background:var(--card); border:1px solid var(--line); border-radius:8px; margin-bottom:16px; overflow:hidden; }
   .card h2 { font-size:15px; margin:0; padding:10px 12px; border-bottom:1px solid var(--line); display:flex; justify-content:space-between; gap:8px; }
   table { width:100%; border-collapse:collapse; }
@@ -104,6 +110,7 @@ async function render() {
   const { parts, q } = route();
   document.getElementById('nav-accounts').className = parts[0] === 'budget' ? '' : 'on';
   document.getElementById('nav-budget').className = parts[0] === 'budget' ? 'on' : '';
+  $app.classList.toggle('fill', parts[0] === 'accounts' && !!parts[1]);
   try {
     if (parts[0] === 'budget') await budgetPage(q);
     else if (parts[0] === 'accounts' && parts[1]) await transactionsPage(decodeURIComponent(parts[1]), q);
@@ -154,7 +161,7 @@ async function transactionsPage(account, q) {
     <div class="row" id="bulk"><input id="bulk-account" list="budget-accounts" placeholder="Budget account">
       <button id="bulk-assign">Assign selected</button><button id="bulk-clear">Unassign selected</button>
       <datalist id="budget-accounts"></datalist></div>
-    <div class="card"><table>
+    <div class="card scroll"><table>
       <tr><th></th><th id="sort-date" class="sortable" title="Click to reverse the order">Date ${order === 'asc' ? '&#9650;' : '&#9660;'}</th><th>Description</th><th>Assigned to</th><th class="num">Amount</th><th class="num">Balance</th><th></th></tr>
       ${txns.map(t => `<tr>
         <td><input type="checkbox" data-id="${esc(t.id)}" ${selected.has(t.id) ? 'checked' : ''}></td>
