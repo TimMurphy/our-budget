@@ -19,6 +19,7 @@
   .dropdown { position:relative; }
   .menu { display:none; position:absolute; top:100%; left:-8px; min-width:260px; background:var(--card); border:1px solid var(--line); border-radius:8px; padding:4px 0; z-index:10; box-shadow:0 4px 12px rgba(0,0,0,.25); }
   .dropdown:hover .menu, .dropdown:focus-within .menu { display:block; }
+  .dropdown.closed .menu { display:none; }
   .menu a { display:block; padding:7px 12px; white-space:nowrap; color:var(--link); }
   .menu a:hover { background:var(--bg); }
   header h1 { font-size:17px; margin:0 12px 0 0; }
@@ -99,6 +100,12 @@ function route() {
   return { parts: path.split('/').filter(Boolean), q: new URLSearchParams(query || '') };
 }
 function goto(hash) { location.hash = hash; }
+
+// Choosing an account closes the menu, even though the mouse is still over it. It opens again
+// the next time the mouse comes back to "Bank accounts".
+const navDropdown = document.querySelector('.dropdown');
+navDropdown.addEventListener('click', e => { if (e.target.closest('.menu a')) navDropdown.classList.add('closed'); });
+navDropdown.addEventListener('mouseleave', () => navDropdown.classList.remove('closed'));
 
 async function loadNav() {
   try {

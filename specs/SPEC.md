@@ -67,7 +67,7 @@ Rules that apply everywhere:
 - Current balance is the opening balance plus the sum of all imported transactions.
 - Also shows the total of all bank accounts.
 - Selecting a bank account opens its transaction list.
-- "Bank accounts" in the navigation bar opens a drop-down listing every bank account. Choosing one opens its transaction list. Clicking "Bank accounts" itself opens the bank account list.
+- "Bank accounts" in the navigation bar opens a drop-down listing every bank account. Choosing one opens its transaction list and closes the drop-down, which opens again the next time the pointer returns to "Bank accounts". Clicking "Bank accounts" itself opens the bank account list.
 
 ### Importing transactions
 
