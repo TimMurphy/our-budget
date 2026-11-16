@@ -90,7 +90,7 @@ Rules that apply everywhere:
 - The page has no back link. The bank account heading sits close to the top of the page, and the navigation bar's "Bank accounts" drop-down is the way to move between accounts.
 - The list of transactions scrolls inside its own area. The account heading, the unassigned count, the filters and the column headings stay in view while the rows scroll.
 - Clicking the Date column heading reverses the order, between newest first (the default) and oldest first. An arrow shows the current order. The choice is remembered in the browser and used for every bank account the next time the page is opened. The running balance stays with its transaction.
-- Filters: All transactions, Unassigned, Assigned. The selected filter is shown in the page address so it survives a refresh.
+- Filters: All transactions, Unassigned, Assigned. A bank account opens on Unassigned. The selected filter is shown in the page address so it survives a refresh.
 - Shows how many transactions are unassigned and their total.
 - Searching by description narrows the list within the current filter.
 

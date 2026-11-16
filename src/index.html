@@ -143,7 +143,7 @@ function dateOrder() {
 
 let selected = new Set();
 async function transactionsPage(account, q) {
-  const filter = q.get('filter') || 'all', search = q.get('search') || '';
+  const filter = q.get('filter') || 'unassigned', search = q.get('search') || '';
   const d = await api('GetTransactions', { account, filter, search });
   const b = await api('GetBudget', {});
   const order = dateOrder();
