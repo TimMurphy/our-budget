@@ -250,7 +250,7 @@ function assignDialog(groups, ids) {
 function newAccountDialog(groups, transactionIds, onDone) {
   const dlg = document.createElement('dialog');
   dlg.innerHTML = `<div class="dlg"><h2>New budget account</h2>
-    <label>Group<select id="na-group">${groups.map(g => `<option value="${esc(g.id)}">${esc(g.name)}</option>`).join('')}
+    <label>Group<select id="na-group">${[...groups].sort((a, b) => a.name.localeCompare(b.name)).map(g => `<option value="${esc(g.id)}">${esc(g.name)}</option>`).join('')}
       <option value="__group">+ Add group…</option></select></label>
     <label id="na-group-name-row" hidden>New group name<input id="na-group-name"></label>
     <label>Budget account name<input id="na-name"></label>
