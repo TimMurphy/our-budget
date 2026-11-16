@@ -24,7 +24,7 @@
   header h1 { font-size:17px; margin:0 12px 0 0; }
   main { width:100%; max-width:960px; margin:0 auto; padding:16px; flex:1; min-height:0; overflow:auto; }
   /* The transactions page: the heading and filters stay put and only the list scrolls. */
-  main.fill { display:flex; flex-direction:column; overflow:auto; }
+  main.fill { display:flex; flex-direction:column; overflow:auto; padding-top:6px; }
   main.fill > .scroll { flex:1; min-height:280px; overflow:auto; margin-bottom:0; }
   .scroll th { position:sticky; top:0; z-index:1; background:var(--card); box-shadow:0 1px 0 var(--line); }
   .card { background:var(--card); border:1px solid var(--line); border-radius:8px; margin-bottom:16px; overflow:hidden; }
@@ -150,7 +150,6 @@ async function transactionsPage(account, q) {
   const txns = order === 'asc' ? [...d.transactions].reverse() : d.transactions;
   const base = '#/accounts/' + encodeURIComponent(account);
   $app.innerHTML = errHtml() + `
-    <p><a href="#/accounts">&larr; Bank accounts</a></p>
     <h2 style="margin:0 0 4px">${esc(d.account.name)} <span class="${cls(d.account.balance_cents)}">${fmt(d.account.balance_cents)}</span></h2>
     <p class="muted">${d.unassigned_count} unassigned, totalling ${fmt(d.unassigned_cents)}</p>
     ${d.failures.length ? `<div class="banner bad">${d.failures.length} statement row(s) could not be imported: ${d.failures.map(f => `${esc(f.file)} row ${f.row} (${esc(f.reason)})`).join(', ')}</div>` : ''}
